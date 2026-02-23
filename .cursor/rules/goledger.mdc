@@ -1,0 +1,31 @@
+---
+description: Core standards and behaviour for the goledger project
+alwaysApply: true
+---
+
+# goledger
+
+A Go backend learning project: financial ledger with ACID transactions, concurrency, and gRPC.
+
+## Scope
+- Work only within `~/projects/goledger`. Do not read outside this directory.
+- Read `./scratch/Go_Ledger_Implementation_Plan.md` for current phase context before starting work.
+
+## Go Standards
+- Idiomatic error handling: explicit `if err != nil` at every call site, no swallowed errors.
+- Interfaces defined in `internal/domain/` (consumer-owned, not implementor-declared).
+- Monetary values: `int64` micros only — never `float64`.
+- Logging: `slog` with structured fields throughout.
+- Simple over clever. No premature abstractions.
+
+## Learning Callouts
+First use of a notable Go idiom or Java-divergent pattern: add a single `// Go: <concept>` comment.
+Example: `// Go: defer guarantees cleanup even if the function returns early`
+Do not repeat the same callout in the same file.
+
+## Agent Behaviour
+- Task is clear → implement it, keep the response summary brief.
+- Task needs a design decision the plan doesn't resolve → ask once, concisely.
+- Do not regenerate docs unless asked.
+- Keep code comments concise: intent and constraints only, no narration.
+- Prefer targeted reads over broad filesystem exploration.
