@@ -1,6 +1,6 @@
 # Go-Ledger
 
-A high-performance, immutable financial ledger service built to demonstrate **ACID compliance**, **idempotency**, and **concurrency control** in distributed systems. 
+A high-performance, immutable financial ledger service built to demonstrate **ACID compliance**, **idempotency**, and **concurrency control** in distributed systems.
 This project simulates a core banking engine that processes financial transactions safely at high concurrency. No race conditions, no double-spends.
 
 ## Architecture
@@ -33,6 +33,8 @@ goledger/
 
 - Go 1.21+ (for slog support)
 - Make
+- Leverage the pre-commit hooks with:
+  - `brew install pre-commit` if you don't have it. Then `pre-commit install`
 
 ### Running
 
@@ -44,6 +46,11 @@ make run
 Run tests:
 ```bash
 make test
+```
+
+Run Go formatting / vetting:
+```bash
+make fmt vet
 ```
 
 ### Expected Output
