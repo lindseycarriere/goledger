@@ -1,8 +1,12 @@
 .PHONY: test run vet
 
-# Run all tests
+# Format all code according to the official Go style
+fmt:
+	go fmt ./...
+
+# Run all tests (with race detector)
 test:
-	go test -v ./...
+	go test -race -v ./...
 
 # Run the server
 run:
