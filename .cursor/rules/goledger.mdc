@@ -9,7 +9,7 @@ A Go backend learning project: financial ledger with ACID transactions, concurre
 
 ## Scope
 - Work only within `~/projects/goledger`. Do not read outside this directory.
-- Read `./scratch/Go_Ledger_Implementation_Plan.md` for current phase context before starting work.
+- Read `./docs/planning/Go_Ledger_Implementation_Plan.md` for current phase context before starting work.
 
 ## Go Standards
 - Idiomatic error handling: explicit `if err != nil` at every call site, no swallowed errors.
