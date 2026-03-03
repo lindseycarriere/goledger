@@ -37,6 +37,10 @@ goledger/
 - Make
 - Docker (for integration tests; [testcontainers](https://golang.testcontainers.org/) spins up Postgres in a container)
 - sqlc (for schema/query changes): `go install github.com/sqlc-dev/sqlc/cmd/sqlc@latest`
+- buf (for proto changes): `go install github.com/bufbuild/buf/cmd/buf@latest`
+- grpcurl (for manual API verification): `go install github.com/fullstorydev/grpcurl/cmd/grpcurl@latest`
+
+Ensure `$(go env GOPATH)/bin` is in your PATH so these tools are found.
 - Leverage the pre-commit hooks with:
   - `brew install pre-commit` if you don't have it. Then `pre-commit install`
 
@@ -62,10 +66,28 @@ Run Go formatting / vetting:
 make fmt vet
 ```
 
-Generate sqlc code (after editing schema or queries):
+Generate sqlc and protobuf code (after editing schema, queries, or `.proto` files):
 ```bash
 make generate
 ```
+
+### gRPC API Implementation
+
+The gRPC API is defined in `proto/ledger/v1/ledger.proto`.
+
+| Tool | Purpose |
+|------|---------|
+| **buf** | Manages the Protobuf toolchain. Generates Go code from `.proto` files via `make generate`. |
+| **grpcurl** | Command-line client for calling gRPC methods. Use for manual verification. |
+
+**When making changes:**
+
+Never edit generated files in `gen/**`. Instead:
+
+1. Edit `proto/ledger/v1/ledger.proto` (add RPCs, messages, or fields)
+2. Run `make generate` - this regenerates `gen/go/ledger/v1/*.pb.go`
+3. Update `internal/server/grpc.go` to implement new RPCs or handle new fields
+4. Run `make test` and verify end-to-end with grpcurl (see [docs/testing/grpc-e2e.md](docs/testing/grpc-e2e.md))
 
 ### Postgres Database Implementation
 
@@ -96,8 +118,10 @@ The Postgres store uses two complementary tools for schema and query management:
 
 `make run` produces structured JSON logging:
 ```json
-{"time":"2024-01-01T12:00:00Z","level":"INFO","msg":"ledger service starting","version":"0.1.0"}
+{"time":"...","level":"INFO","msg":"gRPC server listening","addr":"[::]:50051"}
 ```
+
+For manual API verification with grpcurl, see [docs/testing/grpc-e2e.md](docs/testing/grpc-e2e.md).
 
 All tests pass:
 ```bash

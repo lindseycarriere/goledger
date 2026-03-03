@@ -1,48 +1,46 @@
 package main
 
 import (
+	"flag"
 	"log/slog"
+	"net"
 	"os"
 
+	"github.com/lindseycarriere/goledger/internal/server"
 	"github.com/lindseycarriere/goledger/internal/store/memory"
+	"github.com/lindseycarriere/goledger/gen/go/ledger/v1"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/reflection"
 )
 
 func main() {
+	addr := flag.String("addr", ":50051", "gRPC listen address")
+	flag.Parse()
+
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	slog.SetDefault(logger)
 
 	store := memory.NewStore()
+	srv := server.NewServer(store)
 
-	if err := store.CreateAccount("A", 100_000_000); err != nil {
-		slog.Error("create account A", "err", err)
+	grpcSrv := grpc.NewServer(
+		grpc.ChainUnaryInterceptor(
+			server.RecoveryInterceptor(),
+			server.LoggingInterceptor(logger),
+		),
+	)
+	ledgerv1.RegisterLedgerServiceServer(grpcSrv, srv)
+	reflection.Register(grpcSrv) // Enables grpcurl to discover services at runtime
+
+	lis, err := net.Listen("tcp", *addr)
+	if err != nil {
+		slog.Error("listen failed", "addr", *addr, "err", err)
 		os.Exit(1)
 	}
-	if err := store.CreateAccount("B", 0); err != nil {
-		slog.Error("create account B", "err", err)
-		os.Exit(1)
-	}
 
-	balA, _ := store.GetBalance("A")
-	balB, _ := store.GetBalance("B")
-	slog.Info("Initial", "account:A", balA, "account:B", balB)
-
-	amount := int64(50_000_000)
-	if err := store.PostTransfer("A", "B", amount); err != nil {
-		slog.Error("transfer failed", "err", err)
-		os.Exit(1)
-	}
-	slog.Info("Transfer", "from", "A", "to", "B", "amount_micros", amount)
-
-	balA, _ = store.GetBalance("A")
-	balB, _ = store.GetBalance("B")
-	slog.Info("Final", "account:A", balA, "account:B", balB)
-
-	total := balA + balB
-	expected := int64(100_000_000)
-	if total == expected {
-		slog.Info("Sum invariant: PASS", "total", total)
-	} else {
-		slog.Error("Sum invariant: FAIL", "expected", expected, "got", total)
+	slog.Info("gRPC server listening", "addr", lis.Addr().String())
+	if err := grpcSrv.Serve(lis); err != nil {
+		slog.Error("serve failed", "err", err)
 		os.Exit(1)
 	}
 }

@@ -1,0 +1,35 @@
+syntax = "proto3";
+
+package ledger.v1;
+
+option go_package = "github.com/lindseycarriere/goledger/gen/go/ledger/v1;ledgerv1";
+
+// LedgerService exposes double-entry bookkeeping operations over gRPC.
+service LedgerService {
+  rpc CreateAccount(CreateAccountRequest) returns (CreateAccountResponse);
+  rpc GetBalance(GetBalanceRequest) returns (GetBalanceResponse);
+  rpc PostTransaction(PostTransactionRequest) returns (PostTransactionResponse);
+}
+
+message CreateAccountRequest {
+  string account_id = 1;
+  int64 initial_balance_micros = 2;
+}
+
+message CreateAccountResponse {}
+
+message GetBalanceRequest {
+  string account_id = 1;
+}
+
+message GetBalanceResponse {
+  int64 balance_micros = 1;
+}
+
+message PostTransactionRequest {
+  string from = 1;
+  string to = 2;
+  int64 amount_micros = 3;
+}
+
+message PostTransactionResponse {}

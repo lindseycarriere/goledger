@@ -12,9 +12,12 @@ test:
 test-integration:
 	go test -race -tags integration -v -count=1 ./...
 
-# Generate sqlc code. Requires sqlc CLI: go install github.com/sqlc-dev/sqlc/cmd/sqlc@latest
+# Generate sqlc and protobuf code.
+# Requires: sqlc (go install github.com/sqlc-dev/sqlc/cmd/sqlc@latest)
+#           buf (go install github.com/bufbuild/buf/cmd/buf@latest)
 generate:
 	sqlc generate
+	buf generate
 
 # Run the server
 run:

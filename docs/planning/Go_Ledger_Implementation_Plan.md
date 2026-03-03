@@ -213,7 +213,7 @@ This phase wires the service built in Phases 1 and 2 to a network transport. gRP
 - **`buf`**: Manages the Protobuf toolchain (replaces raw `protoc` with a simpler, reproducible config). Generates Go code from `.proto` files.
 - **`grpc-go`**: The Go gRPC runtime library.
 
-The `.proto` file in `proto/ledger/v1/ledger.proto` defines the three RPC methods. Generated code goes into a `gen/` directory (excluded from manual editing). The `internal/server/grpc.go` implements the generated server interface and delegates to `internal/ledger/service.go`.
+The `.proto` file in `proto/ledger/v1/ledger.proto` defines the three RPC methods. Generated code goes into a `gen/` directory (excluded from manual editing). The `internal/server/grpc.go` implements the generated server interface and delegates to `domain.Ledger`.
 
 gRPC interceptors (middleware) are added for:
 - **Request logging**: Logs every RPC call with method name, duration, and status code using `slog`
@@ -226,20 +226,29 @@ gRPC interceptors (middleware) are added for:
 ### Definition of Done
 - [ ] `proto/ledger/v1/ledger.proto` defines `CreateAccount`, `GetBalance`, `PostTransaction` RPCs
 - [ ] `buf.yaml` and `buf.gen.yaml` configured; `make generate` regenerates Go code cleanly
-- [ ] `internal/server/grpc.go` implements the generated server interface, delegates to the service layer
+- [ ] `internal/server/grpc.go` implements the generated server interface, delegates to `domain.Ledger`
 - [ ] Server starts on a configurable port and logs each RPC call with duration
 - [ ] Panic recovery interceptor in place
 - [ ] Integration test calls each RPC method and asserts correct response
 
 ### Verification
-```
-make run   # Server starts and logs: {"msg":"gRPC server listening","addr":":50051"}
+
+```bash
+make run   # Server starts and logs: {"msg":"gRPC server listening","addr":"[::]:50051"}
 ```
 
-In a second terminal, using `grpcurl`:
+In a second terminal, run the grpcurl commands below. See [docs/testing/grpc-e2e.md](../testing/grpc-e2e.md) for full end-to-end verification (including PATH setup if grpcurl is not found).
+
 ```bash
-grpcurl -plaintext localhost:50051 ledger.v1.LedgerService/CreateAccount
+# Create accounts (grpcurl requires PATH; see docs/testing/grpc-e2e.md if command not found)
+grpcurl -plaintext -d '{"account_id":"A","initial_balance_micros":100000000}' localhost:50051 ledger.v1.LedgerService/CreateAccount
+grpcurl -plaintext -d '{"account_id":"B","initial_balance_micros":0}' localhost:50051 ledger.v1.LedgerService/CreateAccount
+
+# Get balance
 grpcurl -plaintext -d '{"account_id":"A"}' localhost:50051 ledger.v1.LedgerService/GetBalance
+
+# Post transaction
+grpcurl -plaintext -d '{"from":"A","to":"B","amount_micros":50000000}' localhost:50051 ledger.v1.LedgerService/PostTransaction
 ```
 
 ---
