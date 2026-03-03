@@ -1,19 +1,10 @@
 package memory
 
 import (
-	"errors"
 	"fmt"
 	"sync"
 
 	"github.com/lindseycarriere/goledger/internal/domain"
-)
-
-var (
-	ErrAccountExists     = errors.New("account already exists")
-	ErrAccountNotFound   = errors.New("account not found")
-	ErrInvalidAmount     = errors.New("amount must be positive")
-	ErrSelfTransfer      = errors.New("cannot transfer to same account")
-	ErrInsufficientFunds = errors.New("insufficient funds")
 )
 
 type accountState struct {
@@ -43,7 +34,7 @@ func (s *Store) CreateAccount(id string, initialBalance int64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, exists := s.accounts[id]; exists {
-		return ErrAccountExists
+		return domain.ErrAccountExists
 	}
 	s.accounts[id] = &accountState{balance: initialBalance}
 	return nil
@@ -55,7 +46,7 @@ func (s *Store) GetBalance(id string) (int64, error) {
 	acc, exists := s.accounts[id]
 	s.mu.Unlock()
 	if !exists {
-		return 0, ErrAccountNotFound
+		return 0, domain.ErrAccountNotFound
 	}
 	acc.mu.Lock()
 	defer acc.mu.Unlock()
@@ -66,10 +57,10 @@ func (s *Store) GetBalance(id string) (int64, error) {
 // rolls back on validation failure (insufficient funds, self-transfer, invalid amount).
 func (s *Store) PostTransfer(from, to string, amount int64) error {
 	if amount <= 0 {
-		return ErrInvalidAmount
+		return domain.ErrInvalidAmount
 	}
 	if from == to {
-		return ErrSelfTransfer
+		return domain.ErrSelfTransfer
 	}
 
 	s.mu.Lock()
@@ -78,10 +69,10 @@ func (s *Store) PostTransfer(from, to string, amount int64) error {
 	s.mu.Unlock()
 
 	if !fromExists {
-		return fmt.Errorf("%w: %s", ErrAccountNotFound, from)
+		return fmt.Errorf("%w: %s", domain.ErrAccountNotFound, from)
 	}
 	if !toExists {
-		return fmt.Errorf("%w: %s", ErrAccountNotFound, to)
+		return fmt.Errorf("%w: %s", domain.ErrAccountNotFound, to)
 	}
 
 	// Go: consistent lock ordering prevents deadlock when two goroutines transfer A<->B
@@ -95,7 +86,7 @@ func (s *Store) PostTransfer(from, to string, amount int64) error {
 	defer second.mu.Unlock()
 
 	if fromAcc.balance < amount {
-		return fmt.Errorf("%w: balance=%d, debit=%d", ErrInsufficientFunds, fromAcc.balance, amount)
+		return fmt.Errorf("%w: balance=%d, debit=%d", domain.ErrInsufficientFunds, fromAcc.balance, amount)
 	}
 
 	fromAcc.balance -= amount

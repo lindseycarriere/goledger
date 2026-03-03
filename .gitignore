@@ -1,5 +1,7 @@
 # IDE
-.vscode
+.vscode/*
+# Keep settings to resolve problems impacting code assistance.
+!.vscode/settings.json
 
 # Misc.
 scratch/

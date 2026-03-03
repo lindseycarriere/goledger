@@ -20,6 +20,8 @@ goledger/
 │   ├── store/           # Persistence implementations
 │   │   ├── memory/      # In-memory store (Phase 1)
 │   │   └── postgres/    # Postgres store (Phase 2+)
+│   │       ├── sql/     # schema.sql + queries.sql (sqlc inputs)
+│   │       └── db/      # Generated Go (sqlc output; do not edit)
 │   └── server/          # gRPC transport layer (Phase 3+)
 ├── proto/               # Protobuf definitions (Phase 3+)
 ├── migrations/          # SQL schema migrations (Phase 2+)
@@ -33,6 +35,8 @@ goledger/
 
 - Go 1.21+ (for slog support)
 - Make
+- Docker (for integration tests; [testcontainers](https://golang.testcontainers.org/) spins up Postgres in a container)
+- sqlc (for schema/query changes): `go install github.com/sqlc-dev/sqlc/cmd/sqlc@latest`
 - Leverage the pre-commit hooks with:
   - `brew install pre-commit` if you don't have it. Then `pre-commit install`
 
@@ -43,15 +47,50 @@ Start the service:
 make run
 ```
 
-Run tests:
+Run unit tests (excludes integration tests):
 ```bash
 make test
+```
+
+Run integration tests (requires Docker; uses testcontainers to start Postgres):
+```bash
+make test-integration
 ```
 
 Run Go formatting / vetting:
 ```bash
 make fmt vet
 ```
+
+Generate sqlc code (after editing schema or queries):
+```bash
+make generate
+```
+
+### Postgres Database Implementation
+
+The Postgres store uses two complementary tools for schema and query management:
+
+| Tool | Purpose |
+|------|---------|
+| **golang-migrate** | Versioned schema in `migrations/`. These `.up.sql` / `.down.sql` files are applied to the database. Integration tests run them automatically via ephemeral `testcontainers`. |
+| **sqlc** | Generates type-safe Go from SQL. You write `sql/schema.sql` and `sql/queries.sql`; sqlc produces `db/*.go`. |
+
+**When making changes:**
+
+1. **Schema change**:
+   - Add a new migration in `migrations/` (e.g. `000002_add_foo.up.sql` and `.down.sql`)
+   - Update `internal/store/postgres/sql/schema.sql` to match (sqlc needs it for type generation)
+   - Add or adjust queries in `internal/store/postgres/sql/queries.sql` if needed
+   - Run `make generate` → regenerates `internal/store/postgres/db/*.go`
+   - Run `make test-integration` to verify
+
+2. **Query change**:
+   - Edit `internal/store/postgres/sql/queries.sql`
+   - Run `make generate`
+   - Update implementation (ie: `internal/store/postgres/store.go`) to use the new generated functions
+
+**Do not edit** `internal/store/postgres/db/*.go` — it is generated. Edit the `.sql` files and regenerate.
 
 ### Expected Output
 

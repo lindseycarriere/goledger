@@ -4,6 +4,8 @@ import (
 	"errors"
 	"sync"
 	"testing"
+
+	"github.com/lindseycarriere/goledger/internal/domain"
 )
 
 func TestStore_PostTransfer_Success(t *testing.T) {
@@ -52,7 +54,7 @@ func TestStore_PostTransfer_InsufficientFunds(t *testing.T) {
 	if err == nil {
 		t.Fatal("PostTransfer expected error for insufficient funds")
 	}
-	if !isErr(err, ErrInsufficientFunds) {
+	if !errors.Is(err, domain.ErrInsufficientFunds) {
 		t.Errorf("PostTransfer err = %v, want ErrInsufficientFunds", err)
 	}
 
@@ -73,7 +75,7 @@ func TestStore_PostTransfer_SelfTransfer(t *testing.T) {
 	if err == nil {
 		t.Fatal("PostTransfer expected error for self-transfer")
 	}
-	if !isErr(err, ErrSelfTransfer) {
+	if !errors.Is(err, domain.ErrSelfTransfer) {
 		t.Errorf("PostTransfer err = %v, want ErrSelfTransfer", err)
 	}
 
@@ -97,7 +99,7 @@ func TestStore_PostTransfer_InvalidAmount(t *testing.T) {
 		if err == nil {
 			t.Errorf("PostTransfer(%d) expected error", amount)
 		}
-		if !isErr(err, ErrInvalidAmount) {
+		if !errors.Is(err, domain.ErrInvalidAmount) {
 			t.Errorf("PostTransfer(%d) err = %v, want ErrInvalidAmount", amount, err)
 		}
 	}
@@ -159,7 +161,7 @@ func TestStore_CreateAccount_Duplicate(t *testing.T) {
 	if err == nil {
 		t.Fatal("CreateAccount expected error for duplicate")
 	}
-	if !isErr(err, ErrAccountExists) {
+	if !errors.Is(err, domain.ErrAccountExists) {
 		t.Errorf("CreateAccount err = %v, want ErrAccountExists", err)
 	}
 }
@@ -170,11 +172,7 @@ func TestStore_GetBalance_NotFound(t *testing.T) {
 	if err == nil {
 		t.Fatal("GetBalance expected error for missing account")
 	}
-	if !isErr(err, ErrAccountNotFound) {
+	if !errors.Is(err, domain.ErrAccountNotFound) {
 		t.Errorf("GetBalance err = %v, want ErrAccountNotFound", err)
 	}
-}
-
-func isErr(err, target error) bool {
-	return errors.Is(err, target)
 }
