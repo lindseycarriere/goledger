@@ -12,3 +12,11 @@ CREATE TABLE entries (
 );
 
 CREATE INDEX idx_entries_account_id ON entries(account_id);
+
+-- Matches migrations/000002. Idempotency for PostTransaction.
+CREATE TABLE idempotency_keys (
+    key TEXT PRIMARY KEY,
+    error_code TEXT NOT NULL DEFAULT '',
+    error_detail TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);

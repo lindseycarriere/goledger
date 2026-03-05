@@ -46,6 +46,22 @@ func (q *Queries) GetBalance(ctx context.Context, id string) (int64, error) {
 	return balance_micros, err
 }
 
+const getIdempotencyResult = `-- name: GetIdempotencyResult :one
+SELECT error_code, error_detail FROM idempotency_keys WHERE key = $1
+`
+
+type GetIdempotencyResultRow struct {
+	ErrorCode   string
+	ErrorDetail string
+}
+
+func (q *Queries) GetIdempotencyResult(ctx context.Context, key string) (GetIdempotencyResultRow, error) {
+	row := q.db.QueryRow(ctx, getIdempotencyResult, key)
+	var i GetIdempotencyResultRow
+	err := row.Scan(&i.ErrorCode, &i.ErrorDetail)
+	return i, err
+}
+
 const insertEntry = `-- name: InsertEntry :one
 INSERT INTO entries (account_id, amount_micros)
 VALUES ($1, $2)
@@ -62,6 +78,22 @@ func (q *Queries) InsertEntry(ctx context.Context, arg InsertEntryParams) (int64
 	var id int64
 	err := row.Scan(&id)
 	return id, err
+}
+
+const insertIdempotencyKey = `-- name: InsertIdempotencyKey :exec
+INSERT INTO idempotency_keys (key, error_code, error_detail)
+VALUES ($1, $2, $3)
+`
+
+type InsertIdempotencyKeyParams struct {
+	Key         string
+	ErrorCode   string
+	ErrorDetail string
+}
+
+func (q *Queries) InsertIdempotencyKey(ctx context.Context, arg InsertIdempotencyKeyParams) error {
+	_, err := q.db.Exec(ctx, insertIdempotencyKey, arg.Key, arg.ErrorCode, arg.ErrorDetail)
+	return err
 }
 
 const updateBalance = `-- name: UpdateBalance :exec

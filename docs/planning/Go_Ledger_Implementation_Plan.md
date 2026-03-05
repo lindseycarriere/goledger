@@ -281,9 +281,9 @@ go test -race -tags integration -run TestIdempotency ./...
 
 Manual verification with `grpcurl` — fire the same request twice:
 ```bash
-grpcurl -plaintext -d '{"idempotency_key":"abc-123","from":"A","to":"B","amount":10}' \
+grpcurl -plaintext -d '{"idempotency_key":"abc-123","from":"A","to":"B","amount_micros":10000000}' \
   localhost:50051 ledger.v1.LedgerService/PostTransaction   # executes
-grpcurl -plaintext -d '{"idempotency_key":"abc-123","from":"A","to":"B","amount":10}' \
+grpcurl -plaintext -d '{"idempotency_key":"abc-123","from":"A","to":"B","amount_micros":10000000}' \
   localhost:50051 ledger.v1.LedgerService/PostTransaction   # returns cached result, balance unchanged
 ```
 

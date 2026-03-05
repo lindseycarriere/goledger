@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -67,8 +68,51 @@ func (s *Store) GetBalance(id string) (int64, error) {
 	return balance, nil
 }
 
-// PostTransfer moves amount micros from from to to using a single DB transaction with SELECT FOR UPDATE.
-func (s *Store) PostTransfer(from, to string, amount int64) error {
+// PostTransfer moves amount micros from from to to. idempotencyKey is optional:
+// when non-empty, duplicate requests return the cached result without re-executing.
+func (s *Store) PostTransfer(idempotencyKey string, from, to string, amount int64) error {
+	if idempotencyKey == "" {
+		return s.postTransferNoIdempotency(from, to, amount)
+	}
+
+	ctx := context.Background()
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	q := s.queries.WithTx(tx)
+
+	cached, err := q.GetIdempotencyResult(ctx, idempotencyKey)
+	if err == nil {
+		return codeToDomainErr(cached.ErrorCode, cached.ErrorDetail)
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
+
+	// Key not seen; execute transfer and store result atomically.
+	transferErr := s.doTransferInTx(ctx, q, from, to, amount)
+
+	code, detail := domainErrToCode(transferErr)
+	if err := q.InsertIdempotencyKey(ctx, db.InsertIdempotencyKeyParams{
+		Key:         idempotencyKey,
+		ErrorCode:   code,
+		ErrorDetail: detail,
+	}); err != nil {
+		return err
+	}
+
+	// Commit to persist the idempotency record (success or failure) before returning.
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+	return transferErr
+}
+
+// postTransferNoIdempotency performs a transfer without idempotency (single DB transaction).
+func (s *Store) postTransferNoIdempotency(from, to string, amount int64) error {
 	if amount <= 0 {
 		return domain.ErrInvalidAmount
 	}
@@ -81,12 +125,24 @@ func (s *Store) PostTransfer(from, to string, amount int64) error {
 	if err != nil {
 		return err
 	}
-	// Go: defer ensures rollback if we return before Commit
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	q := s.queries.WithTx(tx)
+	if err := s.doTransferInTx(ctx, q, from, to, amount); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
 
-	// Lock both accounts in consistent order to avoid deadlock.
+// doTransferInTx performs the transfer logic within an existing transaction.
+func (s *Store) doTransferInTx(ctx context.Context, q *db.Queries, from, to string, amount int64) error {
+	if amount <= 0 {
+		return domain.ErrInvalidAmount
+	}
+	if from == to {
+		return domain.ErrSelfTransfer
+	}
+
 	firstID, secondID := from, to
 	if from > to {
 		firstID, secondID = to, from
@@ -130,9 +186,50 @@ func (s *Store) PostTransfer(from, to string, amount int64) error {
 	if _, err := q.InsertEntry(ctx, db.InsertEntryParams{AccountID: to, AmountMicros: amount}); err != nil {
 		return err
 	}
-
-	return tx.Commit(ctx)
+	return nil
 }
 
-// Ensure Store implements domain.Ledger at compile time.
-var _ domain.Ledger = (*Store)(nil)
+const (
+	idemCodeOK               = "ok"
+	idemCodeAccountNotFound  = "account_not_found"
+	idemCodeInsufficientFunds = "insufficient_funds"
+	idemCodeInvalidAmount     = "invalid_amount"
+	idemCodeSelfTransfer      = "self_transfer"
+)
+
+func domainErrToCode(err error) (code, detail string) {
+	if err == nil {
+		return idemCodeOK, ""
+	}
+	switch {
+	case errors.Is(err, domain.ErrAccountNotFound):
+		// Extract account id from wrapped error message (e.g. "account not found: A")
+		detail = strings.TrimPrefix(err.Error(), domain.ErrAccountNotFound.Error()+": ")
+		return idemCodeAccountNotFound, detail
+	case errors.Is(err, domain.ErrInsufficientFunds):
+		return idemCodeInsufficientFunds, ""
+	case errors.Is(err, domain.ErrInvalidAmount):
+		return idemCodeInvalidAmount, ""
+	case errors.Is(err, domain.ErrSelfTransfer):
+		return idemCodeSelfTransfer, ""
+	default:
+		return "unknown", err.Error()
+	}
+}
+
+func codeToDomainErr(code, detail string) error {
+	switch code {
+	case idemCodeOK:
+		return nil
+	case idemCodeAccountNotFound:
+		return fmt.Errorf("%w: %s", domain.ErrAccountNotFound, detail)
+	case idemCodeInsufficientFunds:
+		return domain.ErrInsufficientFunds
+	case idemCodeInvalidAmount:
+		return domain.ErrInvalidAmount
+	case idemCodeSelfTransfer:
+		return domain.ErrSelfTransfer
+	default:
+		return fmt.Errorf("idempotency replay: %s", code)
+	}
+}

@@ -5,6 +5,7 @@ package postgres
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 
@@ -90,7 +91,7 @@ func TestPostgresStore(t *testing.T) {
 		if err := store.CreateAccount("B", 0); err != nil {
 			t.Fatalf("CreateAccount B: %v", err)
 		}
-		if err := store.PostTransfer("A", "B", 50_000_000); err != nil {
+		if err := store.PostTransfer("", "A", "B", 50_000_000); err != nil {
 			t.Fatalf("PostTransfer: %v", err)
 		}
 		balA, err := store.GetBalance("A")
@@ -118,7 +119,7 @@ func TestPostgresStore(t *testing.T) {
 		if err := store.CreateAccount("B", 0); err != nil {
 			t.Fatalf("CreateAccount B: %v", err)
 		}
-		err := store.PostTransfer("A", "B", 20_000)
+		err := store.PostTransfer("", "A", "B", 20_000)
 		if err == nil {
 			t.Fatal("PostTransfer expected error for insufficient funds")
 		}
@@ -138,7 +139,7 @@ func TestPostgresStore(t *testing.T) {
 		if err := store.CreateAccount("A", 100_000); err != nil {
 			t.Fatalf("CreateAccount A: %v", err)
 		}
-		err := store.PostTransfer("A", "A", 50_000)
+		err := store.PostTransfer("", "A", "A", 50_000)
 		if err == nil {
 			t.Fatal("PostTransfer expected error for self-transfer")
 		}
@@ -161,7 +162,7 @@ func TestPostgresStore(t *testing.T) {
 			t.Fatalf("CreateAccount B: %v", err)
 		}
 		for _, amount := range []int64{0, -100} {
-			err := store.PostTransfer("A", "B", amount)
+			err := store.PostTransfer("", "A", "B", amount)
 			if err == nil {
 				t.Errorf("PostTransfer(%d) expected error", amount)
 			}
@@ -203,6 +204,96 @@ func TestPostgresStore(t *testing.T) {
 		}
 	})
 
+	t.Run("PostTransfer_Idempotency_SameKeyDeduplicated", func(t *testing.T) {
+		store := setupStore(t, connStr, restore)
+
+		if err := store.CreateAccount("A", 100_000_000); err != nil {
+			t.Fatalf("CreateAccount A: %v", err)
+		}
+		if err := store.CreateAccount("B", 0); err != nil {
+			t.Fatalf("CreateAccount B: %v", err)
+		}
+
+		key := "idem-uuid-456"
+		for i := 0; i < 10; i++ {
+			err := store.PostTransfer(key, "A", "B", 5_000_000)
+			if err != nil {
+				t.Fatalf("PostTransfer attempt %d: %v", i+1, err)
+			}
+		}
+
+		balA, _ := store.GetBalance("A")
+		balB, _ := store.GetBalance("B")
+		if balA != 95_000_000 || balB != 5_000_000 {
+			t.Errorf("balance debited more than once: A=%d B=%d, want A=95000000 B=5000000", balA, balB)
+		}
+		if balA+balB != 100_000_000 {
+			t.Errorf("sum invariant violated: %d + %d != 100000000", balA, balB)
+		}
+	})
+
+	t.Run("PostTransfer_Idempotency_DistinctKeyExecutes", func(t *testing.T) {
+		store := setupStore(t, connStr, restore)
+
+		if err := store.CreateAccount("A", 100_000_000); err != nil {
+			t.Fatalf("CreateAccount A: %v", err)
+		}
+		if err := store.CreateAccount("B", 0); err != nil {
+			t.Fatalf("CreateAccount B: %v", err)
+		}
+
+		for i := 0; i < 3; i++ {
+			key := fmt.Sprintf("idem-key-%d", i)
+			err := store.PostTransfer(key, "A", "B", 10_000_000)
+			if err != nil {
+				t.Fatalf("PostTransfer %d: %v", i+1, err)
+			}
+		}
+
+		balA, _ := store.GetBalance("A")
+		balB, _ := store.GetBalance("B")
+		if balA != 70_000_000 || balB != 30_000_000 {
+			t.Errorf("three distinct keys should execute three transfers: A=%d B=%d", balA, balB)
+		}
+	})
+
+	t.Run("PostTransfer_Idempotency_CachedFailureReturnedOnRetry", func(t *testing.T) {
+		store := setupStore(t, connStr, restore)
+
+		if err := store.CreateAccount("A", 100_000); err != nil {
+			t.Fatalf("CreateAccount A: %v", err)
+		}
+		// B does not exist
+
+		key := "idem-fail-key"
+		err1 := store.PostTransfer(key, "A", "B", 50_000)
+		if err1 == nil {
+			t.Fatal("PostTransfer expected error for missing account B")
+		}
+		if !errors.Is(err1, domain.ErrAccountNotFound) {
+			t.Errorf("first call err = %v, want ErrAccountNotFound", err1)
+		}
+
+		// Create B and retry with same key — should return cached failure, not execute
+		if err := store.CreateAccount("B", 0); err != nil {
+			t.Fatalf("CreateAccount B: %v", err)
+		}
+		err2 := store.PostTransfer(key, "A", "B", 50_000)
+		if err2 == nil {
+			t.Fatal("PostTransfer with cached-failure key expected error")
+		}
+		if !errors.Is(err2, domain.ErrAccountNotFound) {
+			t.Errorf("retry err = %v, want cached ErrAccountNotFound", err2)
+		}
+
+		// Balance unchanged — transfer was not executed on retry
+		balA, _ := store.GetBalance("A")
+		balB, _ := store.GetBalance("B")
+		if balA != 100_000 || balB != 0 {
+			t.Errorf("balances should be unchanged (cached failure): A=%d B=%d", balA, balB)
+		}
+	})
+
 	t.Run("ConcurrentTransfers_Stress", func(t *testing.T) {
 		store := setupStore(t, connStr, restore)
 
@@ -224,9 +315,9 @@ func TestPostgresStore(t *testing.T) {
 				defer wg.Done()
 				for j := 0; j < transfersPerGoroutine; j++ {
 					if j%2 == 0 {
-						_ = store.PostTransfer("A", "B", amountPerTransfer)
+						_ = store.PostTransfer("", "A", "B", amountPerTransfer)
 					} else {
-						_ = store.PostTransfer("B", "A", amountPerTransfer)
+						_ = store.PostTransfer("", "B", "A", amountPerTransfer)
 					}
 				}
 			}()

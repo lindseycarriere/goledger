@@ -112,3 +112,19 @@ grpcurl -plaintext -d '{"from":"A","to":"B","amount_micros":999999999}' localhos
 ```
 
 Expected: `Code: FailedPrecondition`, `Message: insufficient funds: balance=50000000, debit=999999999`
+
+## Idempotency
+
+When `idempotency_key` is set on write requests, any duplicate requests with that key return the cached result, **including any error**, without mutating state such as transfers. 
+
+Exmaple:
+
+```bash
+# First request executes
+grpcurl -plaintext -d '{"idempotency_key":"abc-123","from":"A","to":"B","amount_micros":10000000}' localhost:50051 ledger.v1.LedgerService/PostTransaction
+
+# Second request with same key returns cached result; balance unchanged
+grpcurl -plaintext -d '{"idempotency_key":"abc-123","from":"A","to":"B","amount_micros":10000000}' localhost:50051 ledger.v1.LedgerService/PostTransaction
+```
+
+Expected: `GetBalance` for account `A` & `B` confirms only one transfer of `10000000` micros was applied.

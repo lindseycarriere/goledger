@@ -6,6 +6,7 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"testing"
 
@@ -103,6 +104,91 @@ func TestGRPCServer(t *testing.T) {
 		}
 		if respA.BalanceMicros+respB.BalanceMicros != 100_000_000 {
 			t.Errorf("sum invariant violated: %d + %d != 100000000", respA.BalanceMicros, respB.BalanceMicros)
+		}
+	})
+
+	t.Run("PostTransaction_Idempotency", func(t *testing.T) {
+		store := memory.NewStore()
+		srv := NewServer(store)
+		grpcSrv := grpc.NewServer(grpc.ChainUnaryInterceptor(RecoveryInterceptor()))
+		ledgerv1.RegisterLedgerServiceServer(grpcSrv, srv)
+		lis := bufconn.Listen(bufconnSize)
+		go func() { _ = grpcSrv.Serve(lis) }()
+		t.Cleanup(grpcSrv.Stop)
+
+		conn, err := grpc.NewClient("passthrough://bufnet",
+			grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) { return lis.Dial() }),
+			grpc.WithTransportCredentials(insecure.NewCredentials()))
+		if err != nil {
+			t.Fatalf("dial: %v", err)
+		}
+		t.Cleanup(func() { _ = conn.Close() })
+
+		client := ledgerv1.NewLedgerServiceClient(conn)
+		ctx := context.Background()
+
+		_, _ = client.CreateAccount(ctx, &ledgerv1.CreateAccountRequest{AccountId: "A", InitialBalanceMicros: 100_000_000})
+		_, _ = client.CreateAccount(ctx, &ledgerv1.CreateAccountRequest{AccountId: "B", InitialBalanceMicros: 0})
+
+		key := "idem-key-123"
+		for i := 0; i < 10; i++ {
+			_, err := client.PostTransaction(ctx, &ledgerv1.PostTransactionRequest{
+				IdempotencyKey: key,
+				From:           "A",
+				To:             "B",
+				AmountMicros:  10_000_000,
+			})
+			if err != nil {
+				t.Fatalf("PostTransaction attempt %d: %v", i+1, err)
+			}
+		}
+
+		respA, _ := client.GetBalance(ctx, &ledgerv1.GetBalanceRequest{AccountId: "A"})
+		respB, _ := client.GetBalance(ctx, &ledgerv1.GetBalanceRequest{AccountId: "B"})
+		if respA.BalanceMicros != 90_000_000 || respB.BalanceMicros != 10_000_000 {
+			t.Errorf("balance debited more than once: A=%d B=%d, want A=90000000 B=10000000", respA.BalanceMicros, respB.BalanceMicros)
+		}
+	})
+
+	t.Run("PostTransaction_Idempotency_DistinctKeyExecutes", func(t *testing.T) {
+		store := memory.NewStore()
+		srv := NewServer(store)
+		grpcSrv := grpc.NewServer(grpc.ChainUnaryInterceptor(RecoveryInterceptor()))
+		ledgerv1.RegisterLedgerServiceServer(grpcSrv, srv)
+		lis := bufconn.Listen(bufconnSize)
+		go func() { _ = grpcSrv.Serve(lis) }()
+		t.Cleanup(grpcSrv.Stop)
+
+		conn, err := grpc.NewClient("passthrough://bufnet",
+			grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) { return lis.Dial() }),
+			grpc.WithTransportCredentials(insecure.NewCredentials()))
+		if err != nil {
+			t.Fatalf("dial: %v", err)
+		}
+		t.Cleanup(func() { _ = conn.Close() })
+
+		client := ledgerv1.NewLedgerServiceClient(conn)
+		ctx := context.Background()
+
+		_, _ = client.CreateAccount(ctx, &ledgerv1.CreateAccountRequest{AccountId: "A", InitialBalanceMicros: 100_000_000})
+		_, _ = client.CreateAccount(ctx, &ledgerv1.CreateAccountRequest{AccountId: "B", InitialBalanceMicros: 0})
+
+		for i := 0; i < 3; i++ {
+			_, err := client.PostTransaction(ctx, &ledgerv1.PostTransactionRequest{
+				IdempotencyKey: fmt.Sprintf("key-%d", i),
+				From:           "A",
+				To:             "B",
+				AmountMicros:  10_000_000,
+			})
+			if err != nil {
+				t.Fatalf("PostTransaction %d: %v", i+1, err)
+			}
+		}
+
+		respA, _ := client.GetBalance(ctx, &ledgerv1.GetBalanceRequest{AccountId: "A"})
+		respB, _ := client.GetBalance(ctx, &ledgerv1.GetBalanceRequest{AccountId: "B"})
+		if respA.BalanceMicros != 70_000_000 || respB.BalanceMicros != 30_000_000 {
+			t.Errorf("three distinct keys should execute three transfers: A=%d B=%d", respA.BalanceMicros, respB.BalanceMicros)
 		}
 	})
 }

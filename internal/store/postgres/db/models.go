@@ -19,3 +19,10 @@ type Entry struct {
 	AmountMicros int64
 	CreatedAt    pgtype.Timestamptz
 }
+
+type IdempotencyKey struct {
+	Key         string
+	ErrorCode   string
+	ErrorDetail string
+	CreatedAt   pgtype.Timestamptz
+}

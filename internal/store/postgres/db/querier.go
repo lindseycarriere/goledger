@@ -12,7 +12,9 @@ type Querier interface {
 	CreateAccount(ctx context.Context, arg CreateAccountParams) error
 	GetAccountForUpdate(ctx context.Context, id string) (Account, error)
 	GetBalance(ctx context.Context, id string) (int64, error)
+	GetIdempotencyResult(ctx context.Context, key string) (GetIdempotencyResultRow, error)
 	InsertEntry(ctx context.Context, arg InsertEntryParams) (int64, error)
+	InsertIdempotencyKey(ctx context.Context, arg InsertIdempotencyKeyParams) error
 	UpdateBalance(ctx context.Context, arg UpdateBalanceParams) error
 }
 

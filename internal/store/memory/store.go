@@ -12,17 +12,25 @@ type accountState struct {
 	mu      sync.Mutex
 }
 
+// idempotencyResult stores the outcome of a completed transfer for replay on duplicate requests.
+type idempotencyResult struct {
+	err error // nil = success
+}
+
 // Store implements domain.Ledger using an in-memory map with per-account mutexes.
 // Lock ordering (lower account ID first) prevents deadlock when transferring between accounts.
 type Store struct {
-	mu       sync.Mutex
-	accounts map[string]*accountState
+	mu             sync.Mutex
+	accounts       map[string]*accountState
+	idempotencyMu  sync.Mutex
+	idempotencyMap map[string]*idempotencyResult
 }
 
 // NewStore returns a new in-memory ledger store.
 func NewStore() *Store {
 	return &Store{
-		accounts: make(map[string]*accountState),
+		accounts:       make(map[string]*accountState),
+		idempotencyMap: make(map[string]*idempotencyResult),
 	}
 }
 
@@ -53,9 +61,27 @@ func (s *Store) GetBalance(id string) (int64, error) {
 	return acc.balance, nil
 }
 
-// PostTransfer moves amount micros from from to to. Applies debit and credit atomically;
-// rolls back on validation failure (insufficient funds, self-transfer, invalid amount).
-func (s *Store) PostTransfer(from, to string, amount int64) error {
+// PostTransfer moves amount micros from from to to. idempotencyKey is optional:
+// when non-empty, duplicate requests return the cached result without re-executing.
+func (s *Store) PostTransfer(idempotencyKey string, from, to string, amount int64) error {
+	if idempotencyKey == "" {
+		return s.doTransfer(from, to, amount)
+	}
+
+	s.idempotencyMu.Lock()
+	defer s.idempotencyMu.Unlock()
+
+	if cached, ok := s.idempotencyMap[idempotencyKey]; ok {
+		return cached.err
+	}
+
+	err := s.doTransfer(from, to, amount)
+	s.idempotencyMap[idempotencyKey] = &idempotencyResult{err: err}
+	return err
+}
+
+// doTransfer performs the core transfer logic. Lock ordering prevents deadlock when transferring A<->B.
+func (s *Store) doTransfer(from, to string, amount int64) error {
 	if amount <= 0 {
 		return domain.ErrInvalidAmount
 	}

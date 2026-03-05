@@ -15,3 +15,10 @@ UPDATE accounts SET balance_micros = $2 WHERE id = $1;
 INSERT INTO entries (account_id, amount_micros)
 VALUES ($1, $2)
 RETURNING id;
+
+-- name: GetIdempotencyResult :one
+SELECT error_code, error_detail FROM idempotency_keys WHERE key = $1;
+
+-- name: InsertIdempotencyKey :exec
+INSERT INTO idempotency_keys (key, error_code, error_detail)
+VALUES ($1, $2, $3);

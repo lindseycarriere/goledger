@@ -49,11 +49,12 @@ func (s *Server) GetBalance(ctx context.Context, req *ledgerv1.GetBalanceRequest
 }
 
 // PostTransaction transfers amount_micros from from to to.
+// When idempotency_key is set, duplicate requests return the cached result.
 func (s *Server) PostTransaction(ctx context.Context, req *ledgerv1.PostTransactionRequest) (*ledgerv1.PostTransactionResponse, error) {
 	if req.From == "" || req.To == "" {
 		return nil, status.Error(codes.InvalidArgument, "from and to are required")
 	}
-	if err := s.ledger.PostTransfer(req.From, req.To, req.AmountMicros); err != nil {
+	if err := s.ledger.PostTransfer(req.IdempotencyKey, req.From, req.To, req.AmountMicros); err != nil {
 		return nil, domainErrToStatus(err)
 	}
 	return &ledgerv1.PostTransactionResponse{}, nil

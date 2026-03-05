@@ -30,6 +30,7 @@ message PostTransactionRequest {
   string from = 1;
   string to = 2;
   int64 amount_micros = 3;
+  string idempotency_key = 4;  // Optional. When set, duplicate requests return cached result.
 }
 
 message PostTransactionResponse {}
