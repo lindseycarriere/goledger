@@ -58,7 +58,8 @@ Dependencies are added only when they justify the complexity they bring.
 | 2 | `pgx`, `sqlc`, `golang-migrate`, `testcontainers-go` | Real persistence and hermetic integration testing |
 | 3 | `grpc-go`, `protobuf`, `buf` | Schema-first API exposure |
 | 4 | No new deps | Idempotency built on existing DB layer |
-| 5 | `docker compose` | One-command demo packaging |
+| 5 | No new deps | Demo client and scenario runner against existing in-memory server |
+| 6 | `docker compose` | Containerized demo packaging and backend switching (`memory`/`postgres`) |
 
 ---
 
@@ -289,42 +290,62 @@ grpcurl -plaintext -d '{"idempotency_key":"abc-123","from":"A","to":"B","amount_
 
 ---
 
-## Phase 5: Demo & Packaging
+## Phase 5: Demo Client (In-Memory First)
 
 ### User Story
-*As a developer showcasing this project, I want a single `make demo` command that starts the full stack, runs a concurrent load scenario, and prints a human-readable proof of correctness so that anyone can verify the system in under two minutes.*
+*As a developer showcasing this project, I want a clear, local, no-Docker demo flow that runs a concurrent gRPC scenario against the current in-memory backend and prints proof of correctness in under two minutes.*
 
 ### Context
-This phase is about storytelling. The engineering is done; Phase 5 makes it observable and shareable. Three artifacts are produced:
+This phase is about storytelling with minimal moving parts. Phase 5 makes it observable and repeatable without introducing container orchestration yet.
 
-**1. `cmd/client/main.go` — The Concurrent Demo Client**
-A Go program that itself is a concurrency exercise: it spawns N goroutines (configurable via flag), each firing a `PostTransaction` gRPC request. It collects results using `sync.WaitGroup` and `channels`, then prints a summary showing final balances and whether the sum invariant holds. This client is the "demo" — it shows both the gRPC API working and Go concurrency in action.
+The main artifact is:
 
-**2. `docker-compose.yml`**
-Defines two services: `postgres` and `server`. The server depends on Postgres being healthy (via a healthcheck). A single `docker compose up` starts the full stack.
+**`cmd/client/main.go` — The Concurrent Demo Client**
+A Go program that itself is a concurrency exercise: it spawns N goroutines (configurable via flags), each firing a `PostTransaction` gRPC request. It collects results using `sync.WaitGroup` and channels, then prints a summary showing final balances, duplicate detection, and whether the sum invariant holds.
 
-**3. `Makefile` demo target**
+`Makefile` provides a simple local entrypoint:
 ```
 make demo
 ```
-Sequence:
-1. Starts Docker Compose stack
-2. Waits for server healthcheck
-3. Creates two accounts via gRPC
-4. Runs the concurrent client with 50 goroutines, 200 total transfers, including deliberate duplicates
-5. Prints final balances and invariant proof
-6. Tears down the stack
+Phase 5 demo sequence:
+1. Starts (or assumes) local server with in-memory backend
+2. Creates two accounts via gRPC
+3. Runs the concurrent client with configurable goroutines/transfers (including deliberate duplicate idempotency keys)
+4. Prints final balances and invariant proof
 
-> **Java Parallel — No Spring Boot, no Tomcat:** The entire server is a single statically compiled binary. `docker build` produces an image typically under 20MB. There is no JVM startup time, no warm-up phase, no GC tuning required for this scale.
+Client flag contract (stable across both phases):
+
+| Flag | Type | Required | Default | Description | Example |
+|---|---|---|---|---|---|
+| `--backend-url` | `string` | No | `localhost:50051` | gRPC address for the running ledger server | `--backend-url=localhost:50051` |
+| `--goroutines` | `int` | No | `50` | Number of concurrent worker goroutines issuing transactions | `--goroutines=100` |
+| `--transfers` | `int` | No | `200` | Total number of `PostTransaction` requests to send | `--transfers=1000` |
+| `--duplicate-keys` | `int` | No | `20` | Number of requests that intentionally reuse an idempotency key | `--duplicate-keys=0` |
+
+Validation rules:
+- `--goroutines` must be `>= 1`
+- `--transfers` must be `>= 1`
+- `--duplicate-keys` must be `>= 0` and `<= --transfers`
+
+Canonical demo parameters (used by `make demo` in both Phase 5 and Phase 6):
+
+| Make parameter | Type | Default | Forwards to | Notes |
+|---|---|---|---|---|
+| `BACKEND_URL` | `string` | `localhost:50051` | Client `--backend-url` | gRPC server address |
+| `GOROUTINES` | `int` | `50` | Client `--goroutines` | Concurrent workers |
+| `TRANSFERS` | `int` | `200` | Client `--transfers` | Total requests |
+| `DUPLICATE_KEYS` | `int` | `20` | Client `--duplicate-keys` | Intentional idempotency duplicates |
+| `DB_TYPE` | `string` | `memory` | Server datastore setting | `memory` in Phase 5; `postgres` in Phase 6 |
+| `RUNTIME` | `string` | `local` | Make orchestration only | `local` in Phase 5; `compose` in Phase 6 |
 
 ### Definition of Done
-- [ ] `cmd/client/main.go` accepts `--goroutines`, `--transfers`, and `--addr` flags
+- [ ] `cmd/client/main.go` accepts `--backend-url`, `--goroutines`, `--transfers`, and `--duplicate-keys` flags
 - [ ] Client uses goroutines + `sync.WaitGroup` to fire concurrent gRPC requests
 - [ ] Client prints a clear summary: requests sent, successes, duplicates detected, final balances, invariant result
-- [ ] `docker-compose.yml` starts Postgres and server cleanly with a healthcheck
-- [ ] `Dockerfile` produces a multi-stage build (builder + minimal runtime image)
-- [ ] `make demo` runs the full scenario end-to-end and exits with code 0
-- [ ] `README.md` updated with a Prerequisites section and the one-command demo instructions
+- [ ] `make run` starts server with the in-memory backend and structured startup logs
+- [ ] `make demo` accepts `BACKEND_URL`, `GOROUTINES`, `TRANSFERS`, `DUPLICATE_KEYS`, `DB_TYPE`, and `RUNTIME` (Phase 5 uses `DB_TYPE=memory`, `RUNTIME=local`)
+- [ ] `make demo` runs the local end-to-end scenario and exits with code 0
+- [ ] `README.md` updated with a "Local Demo (In-Memory)" section (no Docker prerequisite for this phase)
 
 ### Verification
 ```
@@ -333,7 +354,86 @@ make demo
 
 Expected output:
 ```
-[demo] Starting stack...
+[demo] Starting local server (db-type=memory)...
+[demo] Creating accounts A and B...
+[demo] Firing 200 transfers across 50 goroutines (20 duplicate idempotency keys)...
+[demo] Results:
+  Transfers executed:  180
+  Duplicates detected: 20
+  Final balance A:     80000000 micros
+  Final balance B:     120000000 micros
+  Sum invariant:       PASS (expected=200000000, got=200000000)
+[demo] All checks passed.
+```
+
+---
+
+## Phase 6: Docker-based Demo with Postgres DB
+
+### User Story
+*As a developer preparing a portfolio-ready demo, I want one containerized workflow that can run the same client scenario against either in-memory or Postgres backends so that I can clearly prove interface-driven design, real ACID behavior, and operational simplicity.*
+
+### Context
+Phase 5 proved the demo flow locally. Phase 6 packages that exact flow for reproducible execution in any environment and a live postgres database.
+
+Key outcomes:
+
+**1. Dockerized runtime**
+- `Dockerfile` uses a multi-stage build (builder + minimal runtime image)
+- `docker-compose.yml` starts `server` and (when needed) `postgres` with healthchecks
+
+**2. Explicit datastore selection**
+- Server datastore selected via environment variable: `LEDGER_DB_TYPE=memory|postgres`
+- Compose wiring passes `DB_TYPE` clearly and predictably
+
+**3. Single demo entrypoint with parameters**
+Use `make demo` as the canonical command and pass parameters from the same contract introduced in Phase 5:
+```bash
+# Local server process (Phase 5 behavior)
+make demo RUNTIME=local DB_TYPE=memory
+
+# Containerized server, memory datastore
+make demo RUNTIME=compose DB_TYPE=memory
+
+# Containerized server + Postgres datastore (portfolio default)
+make demo RUNTIME=compose DB_TYPE=postgres
+```
+
+The same client scenario runs in all modes; only infrastructure changes.
+
+`make demo` parameter contract:
+
+| Parameter | Type | Required | Default | Allowed values | Example |
+|---|---|---|---|---|---|
+| `BACKEND_URL` | `string` | No | `localhost:50051` | Any `host:port` gRPC target | `make demo BACKEND_URL=127.0.0.1:50051` |
+| `GOROUTINES` | `int` | No | `50` | `>= 1` | `make demo GOROUTINES=100` |
+| `TRANSFERS` | `int` | No | `200` | `>= 1` | `make demo TRANSFERS=1000` |
+| `DUPLICATE_KEYS` | `int` | No | `20` | `0..TRANSFERS` | `make demo DUPLICATE_KEYS=0` |
+| `DB_TYPE` | `string` | No | `memory` | `memory`, `postgres` | `make demo RUNTIME=compose DB_TYPE=postgres` |
+| `RUNTIME` | `string` | No | `local` | `local`, `compose` | `make demo RUNTIME=compose DB_TYPE=memory` |
+
+Forwarding and consistency rules:
+- `BACKEND_URL`, `GOROUTINES`, `TRANSFERS`, `DUPLICATE_KEYS` map 1:1 to client flags (`--backend-url`, `--goroutines`, `--transfers`, `--duplicate-keys`)
+- `DB_TYPE` controls server datastore in both local and compose runtime
+- `RUNTIME` only selects orchestration path (`local` process vs `compose` stack); it is intentionally not a client/server flag
+
+### Definition of Done
+- [ ] `Dockerfile` builds a small production-style image for `cmd/server`
+- [ ] `docker-compose.yml` supports `DB_TYPE=memory|postgres` (default `memory`) and only requires Postgres when `DB_TYPE=postgres`
+- [ ] Compose healthchecks ensure server starts only after required dependencies are ready
+- [ ] `make demo` accepts the same parameter set defined in Phase 5 and runs one consistent scenario flow
+- [ ] `DB_TYPE=postgres` path demonstrates real DB behavior and logs transaction success under concurrency
+- [ ] `README.md` updated with a concise matrix of demo commands and expected outcomes
+
+### Verification
+```bash
+make demo RUNTIME=compose DB_TYPE=postgres
+```
+
+Expected output:
+```
+[demo] Starting Docker Compose stack (db-type=postgres)...
+[demo] Waiting for postgres and server healthchecks...
 [demo] Creating accounts A and B...
 [demo] Firing 200 transfers across 50 goroutines (20 duplicate idempotency keys)...
 [demo] Results:
@@ -356,4 +456,5 @@ Expected output:
 | 2 | Persistence | pgx, sqlc, golang-migrate, testcontainers | ACID transactions, SQL, integration testing | `go test -tags integration` |
 | 3 | gRPC API | grpc-go, buf | Protobuf, RPC server, interceptors | `grpcurl` calls |
 | 4 | Idempotency | None | Distributed systems reliability | `grpcurl` duplicate demo |
-| 5 | Demo & Packaging | Docker Compose | Concurrency client, one-command demo | `make demo` |
+| 5 | Demo Client (Local) | None | Concurrency client, invariant-focused storytelling | `make demo` (local memory) |
+| 6 | Demo Packaging | Docker Compose | Container runtime, datastore selection, reproducible showcase | `make demo RUNTIME=compose DB_TYPE=postgres` |
