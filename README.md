@@ -114,6 +114,50 @@ The Postgres store uses two complementary tools for schema and query management:
 
 **Do not edit** `internal/store/postgres/db/*.go` — it is generated. Edit the `.sql` files and regenerate.
 
+### Local Demo
+
+Demonstrates how a Go client can connect to the `goledger` service gRPC API and simulate a large number of requests concurrently and resilliently.
+
+```bash
+make demo
+```
+
+This starts a local server, creates accounts "A" and "B", and by default makes 200 transfers across 50 concurrent goroutines (including 20 deliberate idempotency-key duplicates), and prints final balances plus the sum invariant. 
+
+Example output:
+
+```
+[demo] Starting local server (db-type=memory)...
+[demo] Creating accounts A and B...
+[demo] Firing 200 transfers across 50 goroutines (20 duplicate idempotency keys)...
+
+[demo] Initial state:
+  Initial balance A:   200000000 micros
+  Initial balance B:   0 micros
+  Transfer amount:     100000 micros (per transfer)
+  Total transfers:     200
+  Goroutines:          50 (concurrent transfers)
+  Duplicate Requests:  20
+
+[demo] Results:
+  Duration:            13 ms
+  Transfers executed:  180
+  Duplicates detected: 20
+  Failed transfers:    0
+  Final balance A:     182000000 micros
+  Final balance B:     18000000 micros
+  Sum invariant:       PASS (expected=200000000, got=200000000)
+[demo] All checks passed.
+```
+
+Optionally override parameters like: `make demo GOROUTINES=100 TRANSFERS=1000 DUPLICATE_KEYS=50`
+
+If a prior demo left the server running (e.g. "bind: address already in use"), stop it with:
+```bash
+make demo-stop
+```
+Or manually: `kill $(lsof -t -i:50052)`
+
 ### Expected Output
 
 `make run` produces structured JSON logging:
