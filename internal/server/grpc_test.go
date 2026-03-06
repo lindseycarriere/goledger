@@ -136,7 +136,7 @@ func TestGRPCServer(t *testing.T) {
 				IdempotencyKey: key,
 				From:           "A",
 				To:             "B",
-				AmountMicros:  10_000_000,
+				AmountMicros:   10_000_000,
 			})
 			if err != nil {
 				t.Fatalf("PostTransaction attempt %d: %v", i+1, err)
@@ -178,7 +178,7 @@ func TestGRPCServer(t *testing.T) {
 				IdempotencyKey: fmt.Sprintf("key-%d", i),
 				From:           "A",
 				To:             "B",
-				AmountMicros:  10_000_000,
+				AmountMicros:   10_000_000,
 			})
 			if err != nil {
 				t.Fatalf("PostTransaction %d: %v", i+1, err)

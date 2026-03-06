@@ -95,7 +95,7 @@ func TestStore_PostTransfer_InvalidAmount(t *testing.T) {
 	}
 
 	for _, amount := range []int64{0, -100} {
-			err := store.PostTransfer("", "A", "B", amount)
+		err := store.PostTransfer("", "A", "B", amount)
 		if err == nil {
 			t.Errorf("PostTransfer(%d) expected error", amount)
 		}

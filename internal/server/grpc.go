@@ -7,8 +7,8 @@ import (
 	"runtime/debug"
 	"time"
 
-	"github.com/lindseycarriere/goledger/internal/domain"
 	ledgerv1 "github.com/lindseycarriere/goledger/gen/go/ledger/v1"
+	"github.com/lindseycarriere/goledger/internal/domain"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"

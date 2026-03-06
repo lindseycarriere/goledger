@@ -190,8 +190,8 @@ func (s *Store) doTransferInTx(ctx context.Context, q *db.Queries, from, to stri
 }
 
 const (
-	idemCodeOK               = "ok"
-	idemCodeAccountNotFound  = "account_not_found"
+	idemCodeOK                = "ok"
+	idemCodeAccountNotFound   = "account_not_found"
 	idemCodeInsufficientFunds = "insufficient_funds"
 	idemCodeInvalidAmount     = "invalid_amount"
 	idemCodeSelfTransfer      = "self_transfer"

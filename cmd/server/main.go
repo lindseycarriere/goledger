@@ -6,9 +6,9 @@ import (
 	"net"
 	"os"
 
+	"github.com/lindseycarriere/goledger/gen/go/ledger/v1"
 	"github.com/lindseycarriere/goledger/internal/server"
 	"github.com/lindseycarriere/goledger/internal/store/memory"
-	"github.com/lindseycarriere/goledger/gen/go/ledger/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
 )
