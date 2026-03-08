@@ -1,0 +1,7 @@
+# Reduce Docker build context and keep image lean. Only cmd/server and its
+# dependencies (internal/, proto/, go.mod, go.sum, migrations/) are needed to build.
+.git
+.cursor
+*.md
+.env
+*_test.go

@@ -101,6 +101,16 @@ func (s *Store) PostTransfer(idempotencyKey string, from, to string, amount int6
 		ErrorCode:   code,
 		ErrorDetail: detail,
 	}); err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == pgCodeUniqueViolation {
+			// Concurrent duplicate: another request committed first. Rollback our tx and return cached result.
+			_ = tx.Rollback(ctx)
+			cached, getErr := s.queries.GetIdempotencyResult(ctx, idempotencyKey)
+			if getErr != nil {
+				return getErr
+			}
+			return codeToDomainErr(cached.ErrorCode, cached.ErrorDetail)
+		}
 		return err
 	}
 

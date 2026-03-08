@@ -381,6 +381,7 @@ Key outcomes:
 **1. Dockerized runtime**
 - `Dockerfile` uses a multi-stage build (builder + minimal runtime image)
 - `docker-compose.yml` starts `server` and (when needed) `postgres` with healthchecks
+- Compose uses host port 50053 (not 50051) so it does not conflict with a local `make run`
 
 **2. Explicit datastore selection**
 - Server datastore selected via environment variable: `LEDGER_DB_TYPE=memory|postgres`
@@ -419,11 +420,13 @@ Forwarding and consistency rules:
 
 ### Definition of Done
 - [ ] `Dockerfile` builds a small production-style image for `cmd/server`
-- [ ] `docker-compose.yml` supports `DB_TYPE=memory|postgres` (default `memory`) and only requires Postgres when `DB_TYPE=postgres`
+- [ ] `docker-compose.yml` supports `DB_TYPE=memory|postgres` (default `memory`) and only requires Postgres when `DB_TYPE=postgres` (via profiles)
 - [ ] Compose healthchecks ensure server starts only after required dependencies are ready
 - [ ] `make demo` accepts the same parameter set defined in Phase 5 and runs one consistent scenario flow
 - [ ] `DB_TYPE=postgres` path demonstrates real DB behavior and logs transaction success under concurrency
 - [ ] `README.md` updated with a concise matrix of demo commands and expected outcomes
+
+**Implementation notes:** Server runs migrations on startup when `LEDGER_DB_TYPE=postgres`. Postgres idempotency handles concurrent duplicate requests (unique-violation race) by fetching the cached result instead of returning an error.
 
 ### Verification
 ```bash
@@ -433,14 +436,15 @@ make demo RUNTIME=compose DB_TYPE=postgres
 Expected output:
 ```
 [demo] Starting Docker Compose stack (db-type=postgres)...
-[demo] Waiting for postgres and server healthchecks...
+[demo] Waiting for server on port 50053...
+[demo] Waiting for gRPC to be ready...
 [demo] Creating accounts A and B...
 [demo] Firing 200 transfers across 50 goroutines (20 duplicate idempotency keys)...
 [demo] Results:
   Transfers executed:  180
   Duplicates detected: 20
-  Final balance A:     80000000 micros
-  Final balance B:     120000000 micros
+  Final balance A:     182000000 micros
+  Final balance B:     18000000 micros
   Sum invariant:       PASS (expected=200000000, got=200000000)
 [demo] All checks passed.
 ```

@@ -294,6 +294,46 @@ func TestPostgresStore(t *testing.T) {
 		}
 	})
 
+	t.Run("PostTransfer_Idempotency_ConcurrentSameKeyAllSucceed", func(t *testing.T) {
+		store := setupStore(t, connStr, restore)
+
+		if err := store.CreateAccount("A", 100_000_000); err != nil {
+			t.Fatalf("CreateAccount A: %v", err)
+		}
+		if err := store.CreateAccount("B", 0); err != nil {
+			t.Fatalf("CreateAccount B: %v", err)
+		}
+
+		key := "idem-concurrent-race"
+		amount := int64(5_000_000)
+		numGoroutines := 20
+		var wg sync.WaitGroup
+		errs := make(chan error, numGoroutines)
+		for i := 0; i < numGoroutines; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				if err := store.PostTransfer(key, "A", "B", amount); err != nil {
+					errs <- err
+				}
+			}()
+		}
+		wg.Wait()
+		close(errs)
+		for err := range errs {
+			t.Errorf("concurrent duplicate request returned error (race fix regressed): %v", err)
+		}
+
+		balA, _ := store.GetBalance("A")
+		balB, _ := store.GetBalance("B")
+		if balA != 95_000_000 || balB != 5_000_000 {
+			t.Errorf("exactly one transfer should execute: A=%d B=%d, want A=95000000 B=5000000", balA, balB)
+		}
+		if balA+balB != 100_000_000 {
+			t.Errorf("sum invariant violated: %d + %d != 100000000", balA, balB)
+		}
+	})
+
 	t.Run("ConcurrentTransfers_Stress", func(t *testing.T) {
 		store := setupStore(t, connStr, restore)
 

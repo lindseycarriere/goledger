@@ -1,4 +1,4 @@
-.PHONY: test run vet test-integration generate demo demo-stop
+.PHONY: test run vet test-integration generate demo demo-stop demo-local demo-compose
 
 # Make parameters for demo (Phase 5: local in-memory; Phase 6: compose/postgres)
 DEMO_PORT ?= 50052
@@ -46,19 +46,57 @@ demo-client:
 		--transfers=$(TRANSFERS) \
 		--duplicate-keys=$(DUPLICATE_KEYS)
 
-# Local demo: start server, run client, stop server. Phase 5 uses DB_TYPE=memory, RUNTIME=local.
-# Uses DEMO_PORT (default 50052) to avoid conflict with user-run server on 50051.
-# Cleans up any process on DEMO_PORT at startup and end (port-based kill is more reliable than PID).
+# Demo: RUNTIME=local (default) starts server process and runs client; RUNTIME=compose uses Docker Compose.
+# Uses DEMO_PORT (default 50052) for local to avoid conflict with user-run server on 50051.
 demo:
+	@if [ "$(RUNTIME)" = "compose" ]; then \
+		$(MAKE) demo-compose; \
+	else \
+		$(MAKE) demo-local; \
+	fi
+
+# Local demo: start server, run client, stop server.
+# Verifies server is listening before running client (fails fast on invalid DB_TYPE etc.).
+demo-local:
 	@echo "[demo] Starting local server (db-type=$(DB_TYPE))..."
 	@pid=$$(lsof -ti:$(DEMO_PORT) 2>/dev/null); [ -n "$$pid" ] && kill $$pid 2>/dev/null; sleep 1; true
-	@go run ./cmd/server --addr=:$(DEMO_PORT) & \
+	@LEDGER_DB_TYPE=$(DB_TYPE) go run ./cmd/server --addr=:$(DEMO_PORT) & \
 	SERVER_PID=$$!; \
 	sleep 3; \
+	nc -z localhost $(DEMO_PORT) 2>/dev/null || { kill $$SERVER_PID 2>/dev/null; echo "[demo] Server failed to start (check LEDGER_DB_TYPE, e.g. use memory or postgres)"; exit 1; }; \
 	$(MAKE) demo-client BACKEND_URL=localhost:$(DEMO_PORT) GOROUTINES=$(GOROUTINES) TRANSFERS=$(TRANSFERS) DUPLICATE_KEYS=$(DUPLICATE_KEYS); \
 	EXIT=$$?; \
 	pid=$$(lsof -ti:$(DEMO_PORT) 2>/dev/null); [ -n "$$pid" ] && kill $$pid 2>/dev/null; \
 	kill $$SERVER_PID 2>/dev/null || true; \
+	[ $$EXIT -eq 0 ] || echo "[demo] Demo failed (exit $$EXIT)."; \
+	exit $$EXIT
+
+# Compose demo uses host port 50053 (see docker-compose.yml) to avoid conflicting with 50051.
+COMPOSE_DEMO_PORT ?= 50053
+
+# Compose demo: bring up stack, wait for server, run client, tear down.
+# Reject invalid DB_TYPE here so the container does not start and exit; server main.go also rejects for manual runs.
+demo-compose:
+	@if [ "$(DB_TYPE)" != "memory" ] && [ "$(DB_TYPE)" != "postgres" ]; then \
+		echo "[demo] DB_TYPE must be memory or postgres, got: $(DB_TYPE)"; exit 1; fi
+	@echo "[demo] Starting Docker Compose stack (db-type=$(DB_TYPE))..."
+	@if [ "$(DB_TYPE)" = "postgres" ]; then \
+		DB_TYPE=$(DB_TYPE) docker compose --profile postgres up -d --build; \
+	else \
+		DB_TYPE=$(DB_TYPE) docker compose up -d --build; \
+	fi
+	@echo "[demo] Waiting for server on port $(COMPOSE_DEMO_PORT)..."
+	@for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do \
+		nc -z localhost $(COMPOSE_DEMO_PORT) 2>/dev/null && break; \
+		sleep 2; \
+	done
+	@nc -z localhost $(COMPOSE_DEMO_PORT) 2>/dev/null || (echo "[demo] Server did not become ready (is port $(COMPOSE_DEMO_PORT) free?)"; if [ "$(DB_TYPE)" = "postgres" ]; then docker compose --profile postgres down; else docker compose down; fi; exit 1)
+	@echo "[demo] Waiting for gRPC to be ready..."
+	@sleep 5
+	@$(MAKE) demo-client BACKEND_URL=localhost:$(COMPOSE_DEMO_PORT) GOROUTINES=$(GOROUTINES) TRANSFERS=$(TRANSFERS) DUPLICATE_KEYS=$(DUPLICATE_KEYS); \
+	EXIT=$$?; \
+	if [ "$(DB_TYPE)" = "postgres" ]; then docker compose --profile postgres down; else docker compose down; fi; \
+	[ $$EXIT -eq 0 ] || echo "[demo] Demo failed (exit $$EXIT)."; \
 	exit $$EXIT
 
 # Run go vet to check for issues

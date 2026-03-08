@@ -35,7 +35,7 @@ goledger/
 
 - Go 1.21+ (for slog support)
 - Make
-- Docker (for integration tests; [testcontainers](https://golang.testcontainers.org/) spins up Postgres in a container)
+- Docker (for integration tests and optional containerized demo; [testcontainers](https://golang.testcontainers.org/) spins up Postgres in a container)
 - sqlc (for schema/query changes): `go install github.com/sqlc-dev/sqlc/cmd/sqlc@latest`
 - buf (for proto changes): `go install github.com/bufbuild/buf/cmd/buf@latest`
 - grpcurl (for manual API verification): `go install github.com/fullstorydev/grpcurl/cmd/grpcurl@latest`
@@ -114,15 +114,29 @@ The Postgres store uses two complementary tools for schema and query management:
 
 **Do not edit** `internal/store/postgres/db/*.go` — it is generated. Edit the `.sql` files and regenerate.
 
+### Demo Modes
+
+Run the local go client against various go ledger server implementations if you want to run within docker compose for interoperability.
+
+| Command | Description |
+|---------|-------------|
+| `make demo` | Runs server with your local go runtime + in-memory datastore. |
+| `make demo RUNTIME=compose DB_TYPE=memory` | Containerized server + in-memory datastore. |
+| `make demo RUNTIME=compose DB_TYPE=postgres` | Containerized server + Postgres DB. |
+
+Compose demos use host port **50053** (not 50051) so they do not conflict with a local `make run` servers for e2e testing. Ensure port **50053** is free when using `RUNTIME=compose`.
+
+Optionally, override demo parameters: `make demo GOROUTINES=100 TRANSFERS=1000 DUPLICATE_KEYS=50`
+
 ### Local Demo
 
-Demonstrates how a Go client can connect to the `goledger` service gRPC API and simulate a large number of requests concurrently and resilliently.
+Demonstrates how a Go client connects to the `goledger` gRPC API and runs concurrent transfers with idempotency.
 
 ```bash
 make demo
 ```
 
-This starts a local server, creates accounts "A" and "B", and by default makes 200 transfers across 50 concurrent goroutines (including 20 deliberate idempotency-key duplicates), and prints final balances plus the sum invariant. 
+This starts a local server (in-memory backend), creates accounts "A" and "B", and by default runs 200 transfers across 50 goroutines (including 20 deliberate idempotency-key duplicates), then prints final balances and the sum invariant. 
 
 Example output:
 
@@ -186,7 +200,8 @@ This project progresses through phases, each introducing Go idioms and infrastru
 - **Phase 2**: Persistence - ACID transactions, SQL, integration testing
 - **Phase 3**: gRPC API - Protobuf, RPC server, interceptors
 - **Phase 4**: Idempotency - Distributed systems reliability
-- **Phase 5**: Demo & Packaging - Concurrency client, one-command demo
+- **Phase 5**: Demo Client (Local Runtime) - Starts local server and runs local go client demo.
+- **Phase 6**: Demo Docker w/ Postgres - Docker Compose the server, datastore selection (memory or postgres) and run the demo client.
 
 ## Project Goals
 
