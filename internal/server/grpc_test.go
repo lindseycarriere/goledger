@@ -14,6 +14,7 @@ import (
 	"github.com/lindseycarriere/goledger/internal/store/memory"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/test/bufconn"
 )
 
@@ -189,6 +190,84 @@ func TestGRPCServer(t *testing.T) {
 		respB, _ := client.GetBalance(ctx, &ledgerv1.GetBalanceRequest{AccountId: "B"})
 		if respA.BalanceMicros != 70_000_000 || respB.BalanceMicros != 30_000_000 {
 			t.Errorf("three distinct keys should execute three transfers: A=%d B=%d", respA.BalanceMicros, respB.BalanceMicros)
+		}
+	})
+
+	t.Run("PostTransaction_IdempotencyHeader_Success", func(t *testing.T) {
+		store := memory.NewStore()
+		srv := NewServer(store)
+		grpcSrv := grpc.NewServer(grpc.ChainUnaryInterceptor(RecoveryInterceptor()))
+		ledgerv1.RegisterLedgerServiceServer(grpcSrv, srv)
+		lis := bufconn.Listen(bufconnSize)
+		go func() { _ = grpcSrv.Serve(lis) }()
+		t.Cleanup(grpcSrv.Stop)
+
+		conn, err := grpc.NewClient("passthrough://bufnet",
+			grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) { return lis.Dial() }),
+			grpc.WithTransportCredentials(insecure.NewCredentials()))
+		if err != nil {
+			t.Fatalf("dial: %v", err)
+		}
+		t.Cleanup(func() { _ = conn.Close() })
+
+		client := ledgerv1.NewLedgerServiceClient(conn)
+		ctx := context.Background()
+
+		_, _ = client.CreateAccount(ctx, &ledgerv1.CreateAccountRequest{AccountId: "A", InitialBalanceMicros: 100_000_000})
+		_, _ = client.CreateAccount(ctx, &ledgerv1.CreateAccountRequest{AccountId: "B", InitialBalanceMicros: 0})
+
+		var header metadata.MD
+		_, err = client.PostTransaction(ctx, &ledgerv1.PostTransactionRequest{
+			IdempotencyKey: "header-test-key",
+			From:           "A",
+			To:             "B",
+			AmountMicros:   1_000_000,
+		}, grpc.Header(&header))
+		if err != nil {
+			t.Fatalf("PostTransaction: %v", err)
+		}
+		vals := header.Get("x-idempotency-key")
+		if len(vals) != 1 || vals[0] != "header-test-key" {
+			t.Errorf("x-idempotency-key header = %v, want [header-test-key]", vals)
+		}
+	})
+
+	t.Run("PostTransaction_IdempotencyHeader_Error", func(t *testing.T) {
+		store := memory.NewStore()
+		srv := NewServer(store)
+		grpcSrv := grpc.NewServer(grpc.ChainUnaryInterceptor(RecoveryInterceptor()))
+		ledgerv1.RegisterLedgerServiceServer(grpcSrv, srv)
+		lis := bufconn.Listen(bufconnSize)
+		go func() { _ = grpcSrv.Serve(lis) }()
+		t.Cleanup(grpcSrv.Stop)
+
+		conn, err := grpc.NewClient("passthrough://bufnet",
+			grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) { return lis.Dial() }),
+			grpc.WithTransportCredentials(insecure.NewCredentials()))
+		if err != nil {
+			t.Fatalf("dial: %v", err)
+		}
+		t.Cleanup(func() { _ = conn.Close() })
+
+		client := ledgerv1.NewLedgerServiceClient(conn)
+		ctx := context.Background()
+
+		_, _ = client.CreateAccount(ctx, &ledgerv1.CreateAccountRequest{AccountId: "A", InitialBalanceMicros: 1_000})
+		// B does not exist — request will fail with NotFound
+
+		var header metadata.MD
+		_, err = client.PostTransaction(ctx, &ledgerv1.PostTransactionRequest{
+			IdempotencyKey: "header-error-key",
+			From:           "A",
+			To:             "B",
+			AmountMicros:   500,
+		}, grpc.Header(&header))
+		if err == nil {
+			t.Fatal("PostTransaction expected error for missing account B")
+		}
+		vals := header.Get("x-idempotency-key")
+		if len(vals) != 1 || vals[0] != "header-error-key" {
+			t.Errorf("x-idempotency-key header on error = %v, want [header-error-key]", vals)
 		}
 	})
 }

@@ -5,13 +5,13 @@ package postgres
 import (
 	"context"
 	"errors"
-	"fmt"
 	"sync"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/lindseycarriere/goledger/internal/domain"
+	"github.com/lindseycarriere/goledger/internal/idempotency"
 	"github.com/testcontainers/testcontainers-go"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 )
@@ -204,134 +204,8 @@ func TestPostgresStore(t *testing.T) {
 		}
 	})
 
-	t.Run("PostTransfer_Idempotency_SameKeyDeduplicated", func(t *testing.T) {
-		store := setupStore(t, connStr, restore)
-
-		if err := store.CreateAccount("A", 100_000_000); err != nil {
-			t.Fatalf("CreateAccount A: %v", err)
-		}
-		if err := store.CreateAccount("B", 0); err != nil {
-			t.Fatalf("CreateAccount B: %v", err)
-		}
-
-		key := "idem-uuid-456"
-		for i := 0; i < 10; i++ {
-			err := store.PostTransfer(key, "A", "B", 5_000_000)
-			if err != nil {
-				t.Fatalf("PostTransfer attempt %d: %v", i+1, err)
-			}
-		}
-
-		balA, _ := store.GetBalance("A")
-		balB, _ := store.GetBalance("B")
-		if balA != 95_000_000 || balB != 5_000_000 {
-			t.Errorf("balance debited more than once: A=%d B=%d, want A=95000000 B=5000000", balA, balB)
-		}
-		if balA+balB != 100_000_000 {
-			t.Errorf("sum invariant violated: %d + %d != 100000000", balA, balB)
-		}
-	})
-
-	t.Run("PostTransfer_Idempotency_DistinctKeyExecutes", func(t *testing.T) {
-		store := setupStore(t, connStr, restore)
-
-		if err := store.CreateAccount("A", 100_000_000); err != nil {
-			t.Fatalf("CreateAccount A: %v", err)
-		}
-		if err := store.CreateAccount("B", 0); err != nil {
-			t.Fatalf("CreateAccount B: %v", err)
-		}
-
-		for i := 0; i < 3; i++ {
-			key := fmt.Sprintf("idem-key-%d", i)
-			err := store.PostTransfer(key, "A", "B", 10_000_000)
-			if err != nil {
-				t.Fatalf("PostTransfer %d: %v", i+1, err)
-			}
-		}
-
-		balA, _ := store.GetBalance("A")
-		balB, _ := store.GetBalance("B")
-		if balA != 70_000_000 || balB != 30_000_000 {
-			t.Errorf("three distinct keys should execute three transfers: A=%d B=%d", balA, balB)
-		}
-	})
-
-	t.Run("PostTransfer_Idempotency_CachedFailureReturnedOnRetry", func(t *testing.T) {
-		store := setupStore(t, connStr, restore)
-
-		if err := store.CreateAccount("A", 100_000); err != nil {
-			t.Fatalf("CreateAccount A: %v", err)
-		}
-		// B does not exist
-
-		key := "idem-fail-key"
-		err1 := store.PostTransfer(key, "A", "B", 50_000)
-		if err1 == nil {
-			t.Fatal("PostTransfer expected error for missing account B")
-		}
-		if !errors.Is(err1, domain.ErrAccountNotFound) {
-			t.Errorf("first call err = %v, want ErrAccountNotFound", err1)
-		}
-
-		// Create B and retry with same key — should return cached failure, not execute
-		if err := store.CreateAccount("B", 0); err != nil {
-			t.Fatalf("CreateAccount B: %v", err)
-		}
-		err2 := store.PostTransfer(key, "A", "B", 50_000)
-		if err2 == nil {
-			t.Fatal("PostTransfer with cached-failure key expected error")
-		}
-		if !errors.Is(err2, domain.ErrAccountNotFound) {
-			t.Errorf("retry err = %v, want cached ErrAccountNotFound", err2)
-		}
-
-		// Balance unchanged — transfer was not executed on retry
-		balA, _ := store.GetBalance("A")
-		balB, _ := store.GetBalance("B")
-		if balA != 100_000 || balB != 0 {
-			t.Errorf("balances should be unchanged (cached failure): A=%d B=%d", balA, balB)
-		}
-	})
-
-	t.Run("PostTransfer_Idempotency_ConcurrentSameKeyAllSucceed", func(t *testing.T) {
-		store := setupStore(t, connStr, restore)
-
-		if err := store.CreateAccount("A", 100_000_000); err != nil {
-			t.Fatalf("CreateAccount A: %v", err)
-		}
-		if err := store.CreateAccount("B", 0); err != nil {
-			t.Fatalf("CreateAccount B: %v", err)
-		}
-
-		key := "idem-concurrent-race"
-		amount := int64(5_000_000)
-		numGoroutines := 20
-		var wg sync.WaitGroup
-		errs := make(chan error, numGoroutines)
-		for i := 0; i < numGoroutines; i++ {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				if err := store.PostTransfer(key, "A", "B", amount); err != nil {
-					errs <- err
-				}
-			}()
-		}
-		wg.Wait()
-		close(errs)
-		for err := range errs {
-			t.Errorf("concurrent duplicate request returned error (race fix regressed): %v", err)
-		}
-
-		balA, _ := store.GetBalance("A")
-		balB, _ := store.GetBalance("B")
-		if balA != 95_000_000 || balB != 5_000_000 {
-			t.Errorf("exactly one transfer should execute: A=%d B=%d, want A=95000000 B=5000000", balA, balB)
-		}
-		if balA+balB != 100_000_000 {
-			t.Errorf("sum invariant violated: %d + %d != 100000000", balA, balB)
-		}
+	t.Run("PostTransfer_Idempotency", func(t *testing.T) {
+		idempotency.RunIdempotencyTests(t, func(t *testing.T) domain.Ledger { return setupStore(t, connStr, restore) })
 	})
 
 	t.Run("ConcurrentTransfers_Stress", func(t *testing.T) {

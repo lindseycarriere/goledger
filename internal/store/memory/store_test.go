@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/lindseycarriere/goledger/internal/domain"
+	"github.com/lindseycarriere/goledger/internal/idempotency"
 )
 
 func TestStore_PostTransfer_Success(t *testing.T) {
@@ -177,89 +178,6 @@ func TestStore_GetBalance_NotFound(t *testing.T) {
 	}
 }
 
-func TestStore_PostTransfer_Idempotency_SameKeyDeduplicated(t *testing.T) {
-	store := NewStore()
-	if err := store.CreateAccount("A", 100_000_000); err != nil {
-		t.Fatalf("CreateAccount A: %v", err)
-	}
-	if err := store.CreateAccount("B", 0); err != nil {
-		t.Fatalf("CreateAccount B: %v", err)
-	}
-
-	key := "idem-key-xyz"
-	for i := 0; i < 10; i++ {
-		err := store.PostTransfer(key, "A", "B", 5_000_000)
-		if err != nil {
-			t.Fatalf("PostTransfer attempt %d: %v", i+1, err)
-		}
-	}
-
-	balA, _ := store.GetBalance("A")
-	balB, _ := store.GetBalance("B")
-	if balA != 95_000_000 || balB != 5_000_000 {
-		t.Errorf("balance debited more than once: A=%d B=%d, want A=95000000 B=5000000", balA, balB)
-	}
-	if balA+balB != 100_000_000 {
-		t.Errorf("sum invariant violated: %d + %d != 100000000", balA, balB)
-	}
-}
-
-func TestStore_PostTransfer_Idempotency_DistinctKeysExecute(t *testing.T) {
-	store := NewStore()
-	if err := store.CreateAccount("A", 100_000_000); err != nil {
-		t.Fatalf("CreateAccount A: %v", err)
-	}
-	if err := store.CreateAccount("B", 0); err != nil {
-		t.Fatalf("CreateAccount B: %v", err)
-	}
-
-	for i := 0; i < 3; i++ {
-		key := "idem-key-" + string(rune('a'+i))
-		err := store.PostTransfer(key, "A", "B", 10_000_000)
-		if err != nil {
-			t.Fatalf("PostTransfer %d: %v", i+1, err)
-		}
-	}
-
-	balA, _ := store.GetBalance("A")
-	balB, _ := store.GetBalance("B")
-	if balA != 70_000_000 || balB != 30_000_000 {
-		t.Errorf("three distinct keys should execute three transfers: A=%d B=%d", balA, balB)
-	}
-}
-
-func TestStore_PostTransfer_Idempotency_CachedFailureReturnedOnRetry(t *testing.T) {
-	store := NewStore()
-	if err := store.CreateAccount("A", 100_000); err != nil {
-		t.Fatalf("CreateAccount A: %v", err)
-	}
-	// B does not exist
-
-	key := "idem-fail-key"
-	err1 := store.PostTransfer(key, "A", "B", 50_000)
-	if err1 == nil {
-		t.Fatal("PostTransfer expected error for missing account B")
-	}
-	if !errors.Is(err1, domain.ErrAccountNotFound) {
-		t.Errorf("first call err = %v, want ErrAccountNotFound", err1)
-	}
-
-	// Create B and retry with same key — should return cached failure, not execute
-	if err := store.CreateAccount("B", 0); err != nil {
-		t.Fatalf("CreateAccount B: %v", err)
-	}
-	err2 := store.PostTransfer(key, "A", "B", 50_000)
-	if err2 == nil {
-		t.Fatal("PostTransfer with cached-failure key expected error")
-	}
-	if !errors.Is(err2, domain.ErrAccountNotFound) {
-		t.Errorf("retry err = %v, want cached ErrAccountNotFound", err2)
-	}
-
-	// Balance unchanged — transfer was not executed on retry
-	balA, _ := store.GetBalance("A")
-	balB, _ := store.GetBalance("B")
-	if balA != 100_000 || balB != 0 {
-		t.Errorf("balances should be unchanged (cached failure): A=%d B=%d", balA, balB)
-	}
+func TestStore_PostTransfer_Idempotency(t *testing.T) {
+	idempotency.RunIdempotencyTests(t, func(*testing.T) domain.Ledger { return NewStore() })
 }

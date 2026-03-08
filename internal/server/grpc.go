@@ -11,6 +11,7 @@ import (
 	"github.com/lindseycarriere/goledger/internal/domain"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 )
 
@@ -50,9 +51,13 @@ func (s *Server) GetBalance(ctx context.Context, req *ledgerv1.GetBalanceRequest
 
 // PostTransaction transfers amount_micros from from to to.
 // When idempotency_key is set, duplicate requests return the cached result.
+// Response includes x-idempotency-key header when key is present (success or error) for correlation.
 func (s *Server) PostTransaction(ctx context.Context, req *ledgerv1.PostTransactionRequest) (*ledgerv1.PostTransactionResponse, error) {
 	if req.From == "" || req.To == "" {
 		return nil, status.Error(codes.InvalidArgument, "from and to are required")
+	}
+	if req.IdempotencyKey != "" {
+		_ = grpc.SetHeader(ctx, metadata.Pairs("x-idempotency-key", req.IdempotencyKey))
 	}
 	if err := s.ledger.PostTransfer(req.IdempotencyKey, req.From, req.To, req.AmountMicros); err != nil {
 		return nil, domainErrToStatus(err)

@@ -115,9 +115,27 @@ Expected: `Code: FailedPrecondition`, `Message: insufficient funds: balance=5000
 
 ## Idempotency
 
-When `idempotency_key` is set on write requests, any duplicate requests with that key return the cached result, **including any error**, without mutating state such as transfers. 
+When `idempotency_key` is set on write requests, any duplicate requests with that key return the cached result, **including any error**, without mutating state such as transfers. The server echoes the key in the response header `x-idempotency-key` (success or error) so clients can correlate responses with requests.
 
-Exmaple:
+### Seeing the idempotency header (e2e)
+
+Use grpcurl’s **verbose** flag (`-v`) to print response metadata, including `x-idempotency-key`:
+
+```bash
+grpcurl -plaintext -v -d '{"idempotency_key":"abc-123","from":"A","to":"B","amount_micros":10000000}' localhost:50051 ledger.v1.LedgerService/PostTransaction
+```
+
+In the output, look for a line like:
+
+```
+x-idempotency-key: abc-123
+```
+
+The header appears for both successful and failed `PostTransaction` calls when `idempotency_key` is set.
+
+### Duplicate request behavior
+
+Example:
 
 ```bash
 # First request executes

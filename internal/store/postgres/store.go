@@ -4,12 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/lindseycarriere/goledger/internal/domain"
+	"github.com/lindseycarriere/goledger/internal/idempotency"
 	"github.com/lindseycarriere/goledger/internal/store/postgres/db"
 )
 
@@ -86,7 +86,7 @@ func (s *Store) PostTransfer(idempotencyKey string, from, to string, amount int6
 
 	cached, err := q.GetIdempotencyResult(ctx, idempotencyKey)
 	if err == nil {
-		return codeToDomainErr(cached.ErrorCode, cached.ErrorDetail)
+		return idempotency.CodeToDomainErr(cached.ErrorCode, cached.ErrorDetail)
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return err
@@ -95,7 +95,7 @@ func (s *Store) PostTransfer(idempotencyKey string, from, to string, amount int6
 	// Key not seen; execute transfer and store result atomically.
 	transferErr := s.doTransferInTx(ctx, q, from, to, amount)
 
-	code, detail := domainErrToCode(transferErr)
+	code, detail := idempotency.DomainErrToCode(transferErr)
 	if err := q.InsertIdempotencyKey(ctx, db.InsertIdempotencyKeyParams{
 		Key:         idempotencyKey,
 		ErrorCode:   code,
@@ -109,7 +109,7 @@ func (s *Store) PostTransfer(idempotencyKey string, from, to string, amount int6
 			if getErr != nil {
 				return getErr
 			}
-			return codeToDomainErr(cached.ErrorCode, cached.ErrorDetail)
+			return idempotency.CodeToDomainErr(cached.ErrorCode, cached.ErrorDetail)
 		}
 		return err
 	}
@@ -197,49 +197,4 @@ func (s *Store) doTransferInTx(ctx context.Context, q *db.Queries, from, to stri
 		return err
 	}
 	return nil
-}
-
-const (
-	idemCodeOK                = "ok"
-	idemCodeAccountNotFound   = "account_not_found"
-	idemCodeInsufficientFunds = "insufficient_funds"
-	idemCodeInvalidAmount     = "invalid_amount"
-	idemCodeSelfTransfer      = "self_transfer"
-)
-
-func domainErrToCode(err error) (code, detail string) {
-	if err == nil {
-		return idemCodeOK, ""
-	}
-	switch {
-	case errors.Is(err, domain.ErrAccountNotFound):
-		// Extract account id from wrapped error message (e.g. "account not found: A")
-		detail = strings.TrimPrefix(err.Error(), domain.ErrAccountNotFound.Error()+": ")
-		return idemCodeAccountNotFound, detail
-	case errors.Is(err, domain.ErrInsufficientFunds):
-		return idemCodeInsufficientFunds, ""
-	case errors.Is(err, domain.ErrInvalidAmount):
-		return idemCodeInvalidAmount, ""
-	case errors.Is(err, domain.ErrSelfTransfer):
-		return idemCodeSelfTransfer, ""
-	default:
-		return "unknown", err.Error()
-	}
-}
-
-func codeToDomainErr(code, detail string) error {
-	switch code {
-	case idemCodeOK:
-		return nil
-	case idemCodeAccountNotFound:
-		return fmt.Errorf("%w: %s", domain.ErrAccountNotFound, detail)
-	case idemCodeInsufficientFunds:
-		return domain.ErrInsufficientFunds
-	case idemCodeInvalidAmount:
-		return domain.ErrInvalidAmount
-	case idemCodeSelfTransfer:
-		return domain.ErrSelfTransfer
-	default:
-		return fmt.Errorf("idempotency replay: %s", code)
-	}
 }

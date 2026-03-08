@@ -60,6 +60,7 @@ Dependencies are added only when they justify the complexity they bring.
 | 4 | No new deps | Idempotency built on existing DB layer |
 | 5 | No new deps | Demo client and scenario runner against existing in-memory server |
 | 6 | `docker compose` | Containerized demo packaging and backend switching (`memory`/`postgres`) |
+| 7 | No new deps | Idempotency refinements: shared handler, response metadata |
 
 ---
 
@@ -451,6 +452,33 @@ Expected output:
 
 ---
 
+## Phase 7: Idempotency Refinements
+
+### User Story
+*As a developer, I want consistent idempotency behavior across store implementations and response metadata that lets clients correlate responses with requests without mixing correlation data into domain errors.*
+
+### Context
+Phase 4 introduced idempotency. This phase refines it in two ways:
+
+1. **Shared idempotency package** — Extract error code mapping and a shared test harness into `internal/idempotency/`. Both memory and postgres stores run the same idempotency scenarios, reducing drift and ensuring identical behavior. Memory continues to store raw errors; postgres uses the shared codes for DB serialization.
+
+2. **Response metadata** — When `idempotency_key` is present in a request, the server sets `x-idempotency-key` in the gRPC response header (success or error). Clients can correlate responses with requests without changing domain error messages. Correlation stays in transport metadata; domain data stays clean.
+
+### Definition of Done
+- [ ] `internal/idempotency/codes.go` — error code mapping (domain ↔ serializable codes) used by postgres store
+- [ ] `internal/idempotency/testing.go` — `RunIdempotencyTests(t, ledger)` harness covering same-key dedup, distinct keys, cached failure, concurrent same key
+- [ ] Memory and postgres tests call shared harness; duplicated idempotency tests removed
+- [ ] `PostTransaction` sets `x-idempotency-key` response header when key present, for both success and error
+- [ ] gRPC test asserts header is present when `idempotency_key` is set
+
+### Verification
+```
+go test -race ./...
+go test -race -tags integration ./...
+```
+
+---
+
 ## Summary
 
 | Phase | Theme | New Dependency | Key Learning | Runnable Artifact |
@@ -462,3 +490,4 @@ Expected output:
 | 4 | Idempotency | None | Distributed systems reliability | `grpcurl` duplicate demo |
 | 5 | Demo Client (Local) | None | Concurrency client, invariant-focused storytelling | `make demo` (local memory) |
 | 6 | Demo Packaging | Docker Compose | Container runtime, datastore selection, reproducible showcase | `make demo RUNTIME=compose DB_TYPE=postgres` |
+| 7 | Idempotency Refinements | None | Shared test harness, response metadata, separation of concerns | `go test` (idempotency header) |
