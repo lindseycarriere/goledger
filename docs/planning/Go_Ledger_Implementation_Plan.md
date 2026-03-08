@@ -479,6 +479,43 @@ go test -race -tags integration ./...
 
 ---
 
+## Phase 8: gRPC Health Protocol
+
+### User Story
+*As a developer running the containerized demo, I want the server to implement the standard gRPC health protocol so that Docker Compose gates readiness on a real gRPC RPC response instead of the current TCP probe, giving a stronger guarantee that the server is fully initialized and serving requests before the demo client runs.*
+
+### Context
+Phase 6 introduced `docker compose up --wait` to block until the container healthcheck passes before starting the demo client. The healthcheck used `nc -z localhost 50051` (TCP port-open check), which confirms the listener is bound but does not verify that gRPC is actually serving. This phase replaces that probe with `grpc-health-probe`, the standard tool for the [gRPC Health Checking Protocol](https://github.com/grpc/grpc/blob/master/doc/health-checking.md).
+
+Key outcomes:
+- Server registers `google.golang.org/grpc/health` as a standard gRPC service and transitions it from `NOT_SERVING` → `SERVING` once the TCP listener is bound (migrations and store setup are complete before this point).
+- Compose healthcheck calls `grpc-health-probe` against `ledger.v1.LedgerService`; the probe makes a real gRPC `Health/Check` RPC and exits non-zero unless the service responds `SERVING`.
+- `grpc-health-probe` is compiled in the builder stage of the multi-stage `Dockerfile` and copied into the runtime image — no package manager needed at runtime; `netcat-openbsd` is removed.
+- `docker compose up --wait` in `demo-compose` remains unchanged; it simply evaluates the improved healthcheck.
+
+> **Java Parallel:** Spring Boot's `/actuator/health` endpoint serves a similar purpose — a dedicated readiness probe that goes beyond "is the port open?" to "is the application initialized and able to serve requests?". The gRPC health protocol is the ecosystem-standard equivalent.
+
+### Definition of Done
+- [ ] `cmd/server/main.go` registers `grpc.health.v1.Health`, sets status `NOT_SERVING` after register, then `SERVING` after `net.Listen` succeeds for both `""` (overall) and `ledger.v1.LedgerService`
+- [ ] `internal/server/grpc_test.go` contains `TestHealthServer` with subtests asserting `SERVING` for both the overall and named service using bufconn
+- [ ] `Dockerfile` installs `github.com/grpc-ecosystem/grpc-health-probe@v0.4.46` in builder stage, copies binary to `/usr/local/bin/grpc-health-probe` in runtime image, and removes `netcat-openbsd`
+- [ ] `docker-compose.yml` server healthcheck uses `grpc-health-probe -addr=localhost:50051 -service=ledger.v1.LedgerService` with compose `timeout: 3s`
+- [ ] `go test -race ./...` passes
+
+### Verification
+```bash
+# Unit tests — health service returns SERVING
+go test -race -run TestHealthServer ./internal/server/
+
+# Compose demo uses gRPC readiness gate
+make demo RUNTIME=compose DB_TYPE=memory
+make demo RUNTIME=compose DB_TYPE=postgres
+```
+
+Expected: compose blocks until `grpc-health-probe` reports `SERVING`, then the demo client runs and all checks pass.
+
+---
+
 ## Summary
 
 | Phase | Theme | New Dependency | Key Learning | Runnable Artifact |
@@ -491,3 +528,4 @@ go test -race -tags integration ./...
 | 5 | Demo Client (Local) | None | Concurrency client, invariant-focused storytelling | `make demo` (local memory) |
 | 6 | Demo Packaging | Docker Compose | Container runtime, datastore selection, reproducible showcase | `make demo RUNTIME=compose DB_TYPE=postgres` |
 | 7 | Idempotency Refinements | None | Shared test harness, response metadata, separation of concerns | `go test` (idempotency header) |
+| 8 | gRPC Health Protocol | grpc-health-probe (build tool) | Standard readiness probing, protocol-level healthchecks | `make demo RUNTIME=compose` (health-gated) |

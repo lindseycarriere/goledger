@@ -113,6 +113,68 @@ grpcurl -plaintext -d '{"from":"A","to":"B","amount_micros":999999999}' localhos
 
 Expected: `Code: FailedPrecondition`, `Message: insufficient funds: balance=50000000, debit=999999999`
 
+## Health Check
+
+The server implements the standard [gRPC Health Checking Protocol](https://github.com/grpc/grpc/blob/master/doc/health-checking.md) via `grpc.health.v1.Health`. The service is visible via gRPC reflection and can be probed with either `grpcurl` or `grpc-health-probe`.
+
+### Check with grpcurl (local server)
+
+Probe the overall server status (service `""`):
+
+```bash
+grpcurl -plaintext -d '{"service":""}' localhost:50051 grpc.health.v1.Health/Check
+```
+
+Expected when server is ready:
+
+```json
+{
+  "status": "SERVING"
+}
+```
+
+Probe the ledger service by name:
+
+```bash
+grpcurl -plaintext -d '{"service":"ledger.v1.LedgerService"}' localhost:50051 grpc.health.v1.Health/Check
+```
+
+Expected: `{"status":"SERVING"}`
+
+### Expected status values
+
+| Status | When observed |
+|---|---|
+| `SERVING` | After `net.Listen` succeeds and all startup prerequisites (migrations, store setup) are complete |
+| `NOT_SERVING` | Server process started but listener not yet bound (transient; not normally observable via probe) |
+| Connection refused | Server process not running |
+
+### Check with grpc-health-probe (compose runtime)
+
+`grpc-health-probe` is shipped in the container image at `/usr/local/bin/grpc-health-probe` and is used by the Docker Compose healthcheck. You can invoke it directly against a running compose stack:
+
+```bash
+# Start compose stack (memory backend)
+make demo RUNTIME=compose DB_TYPE=memory
+
+# In another terminal — probe while stack is running
+docker compose exec server /usr/local/bin/grpc-health-probe \
+  -addr=localhost:50051 \
+  -service=ledger.v1.LedgerService \
+  -connect-timeout=1s \
+  -rpc-timeout=1s
+```
+
+Exit code `0` means `SERVING`. Any non-zero exit code means the service is not healthy (probe prints the status to stderr).
+
+### Confirm compose healthcheck status
+
+```bash
+docker compose ps
+```
+
+The `STATUS` column shows `(healthy)` once the probe passes.
+
 ## Idempotency
 
 When `idempotency_key` is set on write requests, any duplicate requests with that key return the cached result, **including any error**, without mutating state such as transfers. The server echoes the key in the response header `x-idempotency-key` (success or error) so clients can correlate responses with requests.

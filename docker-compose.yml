@@ -8,9 +8,9 @@ services:
       LEDGER_DB_TYPE: ${DB_TYPE:-memory}
       LEDGER_DATABASE_URL: postgres://postgres:postgres@postgres:5432/ledger?sslmode=disable
     healthcheck:
-      test: ["CMD", "nc", "-z", "localhost", "50051"]
+      test: ["CMD", "/usr/local/bin/grpc-health-probe", "-addr=localhost:50051", "-service=ledger.v1.LedgerService", "-connect-timeout=1s", "-rpc-timeout=1s"]
       interval: 2s
-      timeout: 2s
+      timeout: 3s
       retries: 10
       start_period: 2s
     depends_on:

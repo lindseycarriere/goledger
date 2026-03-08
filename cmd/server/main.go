@@ -17,6 +17,8 @@ import (
 	"github.com/lindseycarriere/goledger/internal/store/memory"
 	"github.com/lindseycarriere/goledger/internal/store/postgres"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/health"
+	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/reflection"
 )
 
@@ -74,11 +76,22 @@ func main() {
 	ledgerv1.RegisterLedgerServiceServer(grpcSrv, srv)
 	reflection.Register(grpcSrv) // Enables grpcurl to discover services at runtime
 
+	// Go: health.NewServer() starts "" as SERVING by default; set NOT_SERVING
+	// explicitly so state transitions reflect actual readiness intent.
+	healthSrv := health.NewServer()
+	healthpb.RegisterHealthServer(grpcSrv, healthSrv)
+	healthSrv.SetServingStatus("", healthpb.HealthCheckResponse_NOT_SERVING)
+	healthSrv.SetServingStatus(ledgerv1.LedgerService_ServiceDesc.ServiceName, healthpb.HealthCheckResponse_NOT_SERVING)
+
 	lis, err := net.Listen("tcp", *addr)
 	if err != nil {
 		slog.Error("listen failed", "addr", *addr, "err", err)
 		os.Exit(1)
 	}
+
+	// Listener is bound; migrations and store setup are complete above — mark serving.
+	healthSrv.SetServingStatus("", healthpb.HealthCheckResponse_SERVING)
+	healthSrv.SetServingStatus(ledgerv1.LedgerService_ServiceDesc.ServiceName, healthpb.HealthCheckResponse_SERVING)
 
 	slog.Info("gRPC server listening", "addr", lis.Addr().String())
 	if err := grpcSrv.Serve(lis); err != nil {

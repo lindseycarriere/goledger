@@ -14,6 +14,8 @@ import (
 	"github.com/lindseycarriere/goledger/internal/store/memory"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/health"
+	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/test/bufconn"
 )
@@ -268,6 +270,62 @@ func TestGRPCServer(t *testing.T) {
 		vals := header.Get("x-idempotency-key")
 		if len(vals) != 1 || vals[0] != "header-error-key" {
 			t.Errorf("x-idempotency-key header on error = %v, want [header-error-key]", vals)
+		}
+	})
+}
+
+// TestHealthServer verifies that the standard gRPC health service reports
+// SERVING for both the overall server ("") and the ledger service specifically,
+// matching the state transitions performed in cmd/server/main.go.
+func TestHealthServer(t *testing.T) {
+	store := memory.NewStore()
+	srv := NewServer(store)
+
+	grpcSrv := grpc.NewServer()
+	ledgerv1.RegisterLedgerServiceServer(grpcSrv, srv)
+
+	healthSrv := health.NewServer()
+	healthpb.RegisterHealthServer(grpcSrv, healthSrv)
+	healthSrv.SetServingStatus("", healthpb.HealthCheckResponse_NOT_SERVING)
+	healthSrv.SetServingStatus(ledgerv1.LedgerService_ServiceDesc.ServiceName, healthpb.HealthCheckResponse_NOT_SERVING)
+	// Simulate post-listen readiness transition (mirrors main.go startup sequence).
+	healthSrv.SetServingStatus("", healthpb.HealthCheckResponse_SERVING)
+	healthSrv.SetServingStatus(ledgerv1.LedgerService_ServiceDesc.ServiceName, healthpb.HealthCheckResponse_SERVING)
+
+	lis := bufconn.Listen(bufconnSize)
+	go func() { _ = grpcSrv.Serve(lis) }()
+	t.Cleanup(grpcSrv.Stop)
+
+	conn, err := grpc.NewClient("passthrough://bufnet",
+		grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) { return lis.Dial() }),
+		grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+
+	healthClient := healthpb.NewHealthClient(conn)
+	ctx := context.Background()
+
+	t.Run("OverallStatus", func(t *testing.T) {
+		resp, err := healthClient.Check(ctx, &healthpb.HealthCheckRequest{Service: ""})
+		if err != nil {
+			t.Fatalf("Health/Check overall: %v", err)
+		}
+		if resp.Status != healthpb.HealthCheckResponse_SERVING {
+			t.Errorf("overall status = %v, want SERVING", resp.Status)
+		}
+	})
+
+	t.Run("LedgerServiceStatus", func(t *testing.T) {
+		resp, err := healthClient.Check(ctx, &healthpb.HealthCheckRequest{
+			Service: ledgerv1.LedgerService_ServiceDesc.ServiceName,
+		})
+		if err != nil {
+			t.Fatalf("Health/Check ledger service: %v", err)
+		}
+		if resp.Status != healthpb.HealthCheckResponse_SERVING {
+			t.Errorf("ledger service status = %v, want SERVING", resp.Status)
 		}
 	})
 }

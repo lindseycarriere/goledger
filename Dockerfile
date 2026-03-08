@@ -5,6 +5,10 @@ WORKDIR /build
 COPY go.mod go.sum ./
 RUN go mod download
 
+# Install grpc-health-probe for the compose healthcheck; built here and copied
+# into the runtime image so no extra package manager is needed at runtime.
+RUN go install github.com/grpc-ecosystem/grpc-health-probe@v0.4.46
+
 COPY . .
 RUN CGO_ENABLED=0 go build -o /server ./cmd/server
 
@@ -12,10 +16,9 @@ RUN CGO_ENABLED=0 go build -o /server ./cmd/server
 FROM alpine:3.22
 WORKDIR /app
 
-# netcat-openbsd: used by the docker-compose healthcheck to probe TCP port 50051
-# (gRPC has no HTTP GET to curl; nc -z is a simple "is the port open?" check).
-RUN apk add --no-cache ca-certificates netcat-openbsd
+RUN apk add --no-cache ca-certificates
 COPY --from=builder /server .
+COPY --from=builder /go/bin/grpc-health-probe /usr/local/bin/grpc-health-probe
 COPY migrations ./migrations
 
 EXPOSE 50051
