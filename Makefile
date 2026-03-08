@@ -74,25 +74,17 @@ demo-local:
 # Compose demo uses host port 50053 (see docker-compose.yml) to avoid conflicting with 50051.
 COMPOSE_DEMO_PORT ?= 50053
 
-# Compose demo: bring up stack, wait for server, run client, tear down.
+# Compose demo: bring up stack (--wait until server healthcheck passes), run client, tear down.
 # Reject invalid DB_TYPE here so the container does not start and exit; server main.go also rejects for manual runs.
 demo-compose:
 	@if [ "$(DB_TYPE)" != "memory" ] && [ "$(DB_TYPE)" != "postgres" ]; then \
 		echo "[demo] DB_TYPE must be memory or postgres, got: $(DB_TYPE)"; exit 1; fi
 	@echo "[demo] Starting Docker Compose stack (db-type=$(DB_TYPE))..."
 	@if [ "$(DB_TYPE)" = "postgres" ]; then \
-		DB_TYPE=$(DB_TYPE) docker compose --profile postgres up -d --build; \
+		DB_TYPE=$(DB_TYPE) docker compose --profile postgres up -d --build --wait --wait-timeout 90; \
 	else \
-		DB_TYPE=$(DB_TYPE) docker compose up -d --build; \
+		DB_TYPE=$(DB_TYPE) docker compose up -d --build --wait --wait-timeout 90; \
 	fi
-	@echo "[demo] Waiting for server on port $(COMPOSE_DEMO_PORT)..."
-	@for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do \
-		nc -z localhost $(COMPOSE_DEMO_PORT) 2>/dev/null && break; \
-		sleep 2; \
-	done
-	@nc -z localhost $(COMPOSE_DEMO_PORT) 2>/dev/null || (echo "[demo] Server did not become ready (is port $(COMPOSE_DEMO_PORT) free?)"; if [ "$(DB_TYPE)" = "postgres" ]; then docker compose --profile postgres down; else docker compose down; fi; exit 1)
-	@echo "[demo] Waiting for gRPC to be ready..."
-	@sleep 5
 	@$(MAKE) demo-client BACKEND_URL=localhost:$(COMPOSE_DEMO_PORT) GOROUTINES=$(GOROUTINES) TRANSFERS=$(TRANSFERS) DUPLICATE_KEYS=$(DUPLICATE_KEYS); \
 	EXIT=$$?; \
 	if [ "$(DB_TYPE)" = "postgres" ]; then docker compose --profile postgres down; else docker compose down; fi; \
