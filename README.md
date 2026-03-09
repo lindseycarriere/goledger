@@ -1,5 +1,10 @@
 # Go-Ledger
 
+[![CI](https://github.com/lindseycarriere/goledger/actions/workflows/ci.yml/badge.svg)](https://github.com/lindseycarriere/goledger/actions/workflows/ci.yml)
+[![Go Reference](https://pkg.go.dev/badge/github.com/lindseycarriere/goledger.svg)](https://pkg.go.dev/github.com/lindseycarriere/goledger)
+[![Go Report Card](https://goreportcard.com/badge/github.com/lindseycarriere/goledger)](https://goreportcard.com/report/github.com/lindseycarriere/goledger)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 A high-performance, immutable financial ledger service built to demonstrate **ACID compliance**, **idempotency**, and **concurrency control** in distributed systems.
 This project simulates a core banking engine that processes financial transactions safely at high concurrency. No race conditions, no double-spends.
 
@@ -10,10 +15,12 @@ This project follows idiomatic Go conventions for a production microservice:
 ```
 goledger/
 ├── cmd/
-│   ├── server/          # gRPC server entrypoint (Phase 3+)
-│   │   └── main.go
-│   └── client/          # Concurrent CLI demo client (Phase 5)
-│       └── main.go
+│   ├── server/          # gRPC server entrypoint
+│   ├── healthcheck/     # gRPC health check client utility
+│   └── client/          # Go client to exercise the Go server concurrently
+├── docs/
+│   ├── planning/        # The implementation phases for this project (aka spec-driven development)
+│   ├── testing/         # Extra testing documentation
 ├── internal/
 │   ├── domain/          # Pure domain types, interfaces, business rules
 │   ├── ledger/          # Use-case / service layer
@@ -25,8 +32,7 @@ goledger/
 │   └── server/          # gRPC transport layer (Phase 3+)
 ├── proto/               # Protobuf definitions (Phase 3+)
 ├── migrations/          # SQL schema migrations (Phase 2+)
-├── Makefile             # Developer commands
-└── go.mod
+└── Makefile             # Developer & CI commands
 ```
 
 ## Getting Started
@@ -61,9 +67,9 @@ Run integration tests (requires Docker; uses testcontainers to start Postgres):
 make test-integration
 ```
 
-Run Go formatting / vetting:
+Run Go formatting, vetting, module cleanup:
 ```bash
-make fmt vet
+make fix
 ```
 
 Generate sqlc and protobuf code (after editing schema, queries, or `.proto` files):

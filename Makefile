@@ -1,4 +1,4 @@
-.PHONY: test run vet test-integration generate demo demo-stop demo-local demo-compose
+.PHONY: fix test run test-integration generate demo demo-stop demo-local demo-compose
 
 # Make parameters for demo (Phase 5: local in-memory; Phase 6: compose/postgres)
 DEMO_PORT ?= 50052
@@ -14,16 +14,23 @@ demo-stop:
 	@pid=$$(lsof -ti:$(DEMO_PORT) 2>/dev/null); \
 	if [ -n "$$pid" ]; then kill $$pid 2>/dev/null && echo "[demo] Stopped server (PID $$pid)"; else echo "[demo] No server on port $(DEMO_PORT)"; fi
 
-# Format all code according to the official Go style
-fmt:
+# Fix any code issues
+# - Format all code according to the official Go style
+# - Run go vet to check for issues
+# - Run go mod tidy to clean up the go.mod file
+fix:
 	go fmt ./...
+	go vet ./...
+	go mod tidy
 
 # Run all tests (with race detector). Excludes integration tests.
 test:
+	$(MAKE) fix;
 	go test -race -v ./...
 
 # Run all tests including Postgres integration tests (requires Docker).
 test-integration:
+	$(MAKE) fix;
 	go test -race -tags integration -v -count=1 ./...
 
 # Generate sqlc and protobuf code.
@@ -94,7 +101,3 @@ demo-compose:
 	if [ "$(DB_TYPE)" = "postgres" ]; then docker compose --profile postgres down; else docker compose down; fi; \
 	[ $$EXIT -eq 0 ] || echo "[demo] Demo failed (exit $$EXIT)."; \
 	exit $$EXIT
-
-# Run go vet to check for issues
-vet:
-	go vet ./...
