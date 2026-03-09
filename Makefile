@@ -62,8 +62,12 @@ demo-local:
 	@pid=$$(lsof -ti:$(DEMO_PORT) 2>/dev/null); [ -n "$$pid" ] && kill $$pid 2>/dev/null; sleep 1; true
 	@LEDGER_DB_TYPE=$(DB_TYPE) go run ./cmd/server --addr=:$(DEMO_PORT) & \
 	SERVER_PID=$$!; \
-	sleep 3; \
-	nc -z localhost $(DEMO_PORT) 2>/dev/null || { kill $$SERVER_PID 2>/dev/null; echo "[demo] Server failed to start (check LEDGER_DB_TYPE, e.g. use memory or postgres)"; exit 1; }; \
+	echo "[demo] Waiting for gRPC health check..."; \
+	for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do \
+	  go run ./cmd/healthcheck --addr=localhost:$(DEMO_PORT) --timeout=2s 2>/dev/null && break; \
+	  sleep 1; \
+	done; \
+	go run ./cmd/healthcheck --addr=localhost:$(DEMO_PORT) --timeout=2s || { kill $$SERVER_PID 2>/dev/null; echo "[demo] Server failed to start (check health, logs or LEDGER_DB_TYPE, e.g. use memory or postgres)"; exit 1; }; \
 	$(MAKE) demo-client BACKEND_URL=localhost:$(DEMO_PORT) GOROUTINES=$(GOROUTINES) TRANSFERS=$(TRANSFERS) DUPLICATE_KEYS=$(DUPLICATE_KEYS); \
 	EXIT=$$?; \
 	pid=$$(lsof -ti:$(DEMO_PORT) 2>/dev/null); [ -n "$$pid" ] && kill $$pid 2>/dev/null; \
